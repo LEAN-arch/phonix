@@ -1,25 +1,33 @@
 {
-    "incidents": [
-        {
-            "id": "INC001",
-            "type": "Trauma",
-            "triage": "Red",
-            "location": {"lat": 32.53, "lon": -117.04},
-            "timestamp": "2025-06-28T04:50:00Z"
-        },
-        {
-            "id": "INC002",
-            "type": "Medical",
-            "triage": "Yellow",
-            "location": {"lat": 32.535, "lon": -116.965},
-            "timestamp": "2025-06-28T04:52:00Z"
-        },
-        {
-            "id": "INC003",
-            "type": "Trauma",
-            "triage": "Green",
-            "location": {"lat": 32.52, "lon": -117.12},
-            "timestamp": "2025-06-28T04:55:00Z"
-        }
-    ]
+  "timestamp": "2023-10-27T10:00:00Z",
+  "incidents": [
+    {
+      "id": "INC-001",
+      "type": "Trauma",
+      "triage": "Red",
+      "timestamp": "2023-10-27T09:55:12Z",
+      "location": { "lat": 32.525, "lon": -117.04 }
+    },
+    {
+      "id": "INC-002",
+      "type": "Medical",
+      "triage": "Yellow",
+      "timestamp": "2023-10-27T09:58:30Z",
+      "location": { "lat": 32.531, "lon": -116.96 }
+    },
+    {
+      "id": "INC-003",
+      "type": "Medical",
+      "triage": "Green",
+      "timestamp": "2023-10-27T09:59:01Z",
+      "location": { "lat": 32.515, "lon": -117.12 }
+    },
+    {
+      "id": "INC-004",
+      "type": "Trauma",
+      "triage": "Yellow",
+      "timestamp": "2023-10-27T10:01:45Z",
+      "location": { "lat": 32.538, "lon": -117.045 }
+    }
+  ]
 }
