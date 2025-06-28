@@ -131,6 +131,140 @@ def get_default_config() -> Dict[str, Any]:
                 "A02": {"status": "Disponible", "home_base": "Otay", "location": [32.535, -116.965]},
                 "A03": {"status": "En Misión", "home_base": "Playas", "location": [32.52, -117.12]}
             },
+            "distributions": {# RedShield_Phoenix_Documented.py
+# VERSION 2.4.2 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
+#
+# This version enhances the Phoenix Architecture to focus on predicting medical emergencies (trauma and disease)
+# for multiple time horizons (0.5, 1, 3, 6, 12, 24, 72, 144 hours) to optimize resource allocation and
+# infrastructure readiness. Adds Ensemble Risk Fusion methodology for robust, sensitive predictions.
+#
+# KEY ENHANCEMENTS (v2.4.2):
+# 1. [METHODOLOGY] Added Ensemble Risk Fusion (ERF) to combine all predictive methods, weighted by predictive quality.
+# 2. [KPI] Added Ensemble Risk Score to integrate outputs for robust, sensitive risk assessment.
+# 3. [AUTHENTICATION] Removed authentication and role-based access for streamlined access.
+# 4. [FORECASTING] Retained multi-horizon forecasting (30 min, 1 hr, 3 hr, 6 hr, 12 hr, 24 hr, 3 days, 6 days).
+# 5. [MODELING] Retained Marked Hawkes Process, Spatio-Temporal SIR Model, Lyapunov Exponent, and Copula-Based Correlation.
+# 6. [UI] Updated visualizations to highlight zones with high Ensemble Risk Scores.
+# 7. [RESOURCES] Enhanced recommendations prioritizing zones with high Ensemble Risk Scores.
+# 8. [VISUALIZATION] Uses OpenStreetMap with Leaflet.js (via folium) for geospatial visualizations.
+# 9. [DATA] Uses local sample_api_response.json for incident data.
+# 10. [FIX] Corrected TypeError in fetch_real_time_incidents by converting location dictionaries to shapely Point objects.
+# 11. [FIX] Handled AttributeError in main by checking None return from plot_risk_heatmap before calling st_folium.
+# 12. [FIX] Enhanced fetch_real_time_incidents to validate location data and ensure shapely Point objects, preventing TypeError in GeoDataFrame.
+#
+# PREVIOUS FEATURES (v2.4):
+# - Fixed TypeError in geometry handling for GeoDataFrame.
+# - Fixed DuplicateWidgetID error with unique keys for st.text_input.
+# - Advanced modeling, real-time data integration, resource optimization, PDF reports, and robust error handling.
+#
+"""
+RedShield AI: Phoenix Architecture v2.4.2
+A commercial-grade predictive intelligence engine for urban emergency response.
+Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+from shapely.geometry import Point, Polygon
+from dataclasses import dataclass
+from typing import Dict, List, Any, Tuple, Optional
+import networkx as nx
+import os
+from pathlib import Path
+import plotly.graph_objects as go
+import logging
+import warnings
+import json
+import random
+import requests
+from datetime import datetime, timedelta
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+import io
+from scipy.stats import norm
+import folium
+from streamlit_folium import st_folium
+
+# Advanced Dependencies (optional, with fallbacks)
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    nn = None
+
+try:
+    from pgmpy.models import DiscreteBayesianNetwork
+    from pgmpy.factors.discrete import TabularCPD
+    from pgmpy.inference import VariableElimination
+    PGMPY_AVAILABLE = True
+except ImportError:
+    PGMPY_AVAILABLE = False
+    DiscreteBayesianNetwork = None
+    TabularCPD = None
+    VariableElimination = None
+
+# --- L0: SYSTEM CONFIGURATION & INITIALIZATION ---
+st.set_page_config(page_title="RedShield AI: Phoenix v2.4.2", layout="wide", initial_sidebar_state="expanded")
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler("redshield_phoenix.log")]
+)
+logger = logging.getLogger(__name__)
+
+@dataclass(frozen=True)
+class EnvFactors:
+    is_holiday: bool
+    weather: str
+    traffic_level: float
+    major_event: bool
+    population_density: float
+
+# --- L1: CORE DATA & SIMULATION MODULES ---
+
+@st.cache_resource
+def load_config(config_path: str = "config.json") -> Dict[str, Any]:
+    """Loads and validates the system configuration."""
+    try:
+        if not Path(config_path).exists():
+            logger.warning(f"Config file '{config_path}' not found. Using default configuration.")
+            config = get_default_config()
+        else:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+        mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
+        config['mapbox_api_key'] = mapbox_key if mapbox_key and "YOUR_KEY" not in mapbox_key else None
+        validate_config(config)
+        logger.info("System configuration loaded successfully.")
+        return config
+    except Exception as e:
+        logger.error(f"Failed to load config: {e}")
+        st.error(f"Configuration error: {e}. Using default configuration.")
+        return get_default_config()
+
+def get_default_config() -> Dict[str, Any]:
+    """Returns a default configuration."""
+    return {
+        "mapbox_api_key": None,
+        "data": {
+            "zones": {
+                "Centro": {"polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]], "prior_risk": 0.7, "population": 50000},
+                "Otay": {"polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], "prior_risk": 0.4, "population": 30000},
+                "Playas": {"polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], "prior_risk": 0.3, "population": 20000}
+            },
+            "ambulances": {
+                "A01": {"status": "Disponible", "home_base": "Centro", "location": [32.53, -117.04]},
+                "A02": {"status": "Disponible", "home_base": "Otay", "location": [32.535, -116.965]},
+                "A03": {"status": "En Misión", "home_base": "Playas", "location": [32.52, -117.12]}
+            },
             "distributions": {
                 "zone": {"Centro": 0.5, "Otay": 0.3, "Playas": 0.2},
                 "incident_type": {"Trauma": 0.4, "Medical": 0.6},
@@ -276,20 +410,24 @@ class DataManager:
                 with open('sample_api_response.json', 'r') as f:
                     data = json.load(f)
                     incidents = data.get('incidents', [])
-                    # Convert location dictionaries to shapely Point objects
                     valid_incidents = []
                     for inc in incidents:
-                        if 'location' in inc and 'type' in inc and 'triage' in inc:
-                            loc = inc['location']
-                            if isinstance(loc, dict) and 'lat' in loc and 'lon' in loc:
-                                try:
-                                    lat, lon = float(loc['lat']), float(loc['lon'])
-                                    inc['location'] = Point(lon, lat)
-                                    valid_incidents.append(inc)
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(f"Invalid location data for incident {inc.get('id', 'unknown')}: {e}")
-                            else:
-                                logger.warning(f"Invalid location format for incident {inc.get('id', 'unknown')}: {loc}")
+                        if not all(k in inc for k in ['id', 'type', 'triage', 'location']):
+                            logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Missing required fields")
+                            continue
+                        loc = inc['location']
+                        if not isinstance(loc, dict) or 'lat' not in loc or 'lon' not in loc:
+                            logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Invalid location format {loc}")
+                            continue
+                        try:
+                            lat, lon = float(loc['lat']), float(loc['lon'])
+                            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                                logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Out-of-bounds coordinates ({lat}, {lon})")
+                                continue
+                            inc['location'] = Point(lon, lat)
+                            valid_incidents.append(inc)
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Invalid location data {loc}: {e}")
                     logger.info(f"Loaded {len(valid_incidents)} valid incidents from local sample_api_response.json.")
                     return valid_incidents
             else:
@@ -299,21 +437,28 @@ class DataManager:
                 data = response.json()
                 incidents = []
                 for inc in data.get('incidents', []):
-                    if 'location' in inc and 'type' in inc and 'triage' in inc:
-                        loc = inc['location']
-                        if isinstance(loc, dict) and 'lat' in loc and 'lon' in loc:
-                            try:
-                                lat, lon = float(loc['lat']), float(loc['lon'])
-                                if inc['type'] in self.data_config['distributions']['incident_type'] and inc['triage'] in self.data_config['distributions']['triage']:
-                                    incidents.append({
-                                        'id': inc.get('id', f"RT-{len(incidents)}"),
-                                        'type': inc['type'],
-                                        'triage': inc['triage'],
-                                        'location': Point(lon, lat),
-                                        'timestamp': inc.get('timestamp', datetime.utcnow().isoformat())
-                                    })
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Invalid location data for incident {inc.get('id', 'unknown')}: {e}")
+                    if not all(k in inc for k in ['id', 'type', 'triage', 'location']):
+                        logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Missing required fields")
+                        continue
+                    loc = inc['location']
+                    if not isinstance(loc, dict) or 'lat' not in loc or 'lon' not in loc:
+                        logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Invalid location format {loc}")
+                        continue
+                    try:
+                        lat, lon = float(loc['lat']), float(loc['lon'])
+                        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                            logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Out-of-bounds coordinates ({lat}, {lon})")
+                            continue
+                        if inc['type'] in self.data_config['distributions']['incident_type'] and inc['triage'] in self.data_config['distributions']['triage']:
+                            incidents.append({
+                                'id': inc.get('id', f"RT-{len(incidents)}"),
+                                'type': inc['type'],
+                                'triage': inc['triage'],
+                                'location': Point(lon, lat),
+                                'timestamp': inc.get('timestamp', datetime.utcnow().isoformat())
+                            })
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Skipping incident {inc.get('id', 'unknown')}: Invalid location data {loc}: {e}")
                 logger.info(f"Fetched {len(incidents)} valid incidents from {endpoint}.")
                 return incidents
         except Exception as e:
@@ -1055,8 +1200,8 @@ def initialize_system(config: Dict[str, Any]) -> Tuple[DataManager, PredictiveAn
 def main():
     """Main application entry point."""
     try:
-        st.title("RedShield AI: Phoenix Architecture v2.4.1")
-        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.1")
+        st.title("RedShield AI: Phoenix Architecture v2.4.2")
+        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.2")
 
         config = load_config()
         dm, predictor, sim_engine, advisor = initialize_system(config)
