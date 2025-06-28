@@ -1,144 +1,11 @@
 # RedShield_Phoenix_Documented.py
-# VERSION 2.4.1 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
+# VERSION 2.4.3 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
 #
 # This version enhances the Phoenix Architecture to focus on predicting medical emergencies (trauma and disease)
 # for multiple time horizons (0.5, 1, 3, 6, 12, 24, 72, 144 hours) to optimize resource allocation and
 # infrastructure readiness. Adds Ensemble Risk Fusion methodology for robust, sensitive predictions.
 #
-# KEY ENHANCEMENTS (v2.4.1):
-# 1. [METHODOLOGY] Added Ensemble Risk Fusion (ERF) to combine all predictive methods, weighted by predictive quality.
-# 2. [KPI] Added Ensemble Risk Score to integrate outputs for robust, sensitive risk assessment.
-# 3. [AUTHENTICATION] Removed authentication and role-based access for streamlined access.
-# 4. [FORECASTING] Retained multi-horizon forecasting (30 min, 1 hr, 3 hr, 6 hr, 12 hr, 24 hr, 3 days, 6 days).
-# 5. [MODELING] Retained Marked Hawkes Process, Spatio-Temporal SIR Model, Lyapunov Exponent, and Copula-Based Correlation.
-# 6. [UI] Updated visualizations to highlight zones with high Ensemble Risk Scores.
-# 7. [RESOURCES] Enhanced recommendations prioritizing zones with high Ensemble Risk Scores.
-# 8. [VISUALIZATION] Uses OpenStreetMap with Leaflet.js (via folium) for geospatial visualizations.
-# 9. [DATA] Uses local sample_api_response.json for incident data.
-# 10. [FIX] Corrected TypeError in fetch_real_time_incidents by converting location dictionaries to shapely Point objects.
-# 11. [FIX] Handled AttributeError in main by checking None return from plot_risk_heatmap before calling st_folium.
-#
-# PREVIOUS FEATURES (v2.4):
-# - Fixed TypeError in geometry handling for GeoDataFrame.
-# - Fixed DuplicateWidgetID error with unique keys for st.text_input.
-# - Advanced modeling, real-time data integration, resource optimization, PDF reports, and robust error handling.
-#
-"""
-RedShield AI: Phoenix Architecture v2.4.1
-A commercial-grade predictive intelligence engine for urban emergency response.
-Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
-"""
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import geopandas as gpd
-from shapely.geometry import Point, Polygon
-from dataclasses import dataclass
-from typing import Dict, List, Any, Tuple, Optional
-import networkx as nx
-import os
-from pathlib import Path
-import plotly.graph_objects as go
-import logging
-import warnings
-import json
-import random
-import requests
-from datetime import datetime, timedelta
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
-from reportlab.lib.styles import getSampleStyleSheet
-import io
-from scipy.stats import norm
-import folium
-from streamlit_folium import st_folium
-
-# Advanced Dependencies (optional, with fallbacks)
-try:
-    import torch
-    import torch.nn as nn
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-    torch = None
-    nn = None
-
-try:
-    from pgmpy.models import DiscreteBayesianNetwork
-    from pgmpy.factors.discrete import TabularCPD
-    from pgmpy.inference import VariableElimination
-    PGMPY_AVAILABLE = True
-except ImportError:
-    PGMPY_AVAILABLE = False
-    DiscreteBayesianNetwork = None
-    TabularCPD = None
-    VariableElimination = None
-
-# --- L0: SYSTEM CONFIGURATION & INITIALIZATION ---
-st.set_page_config(page_title="RedShield AI: Phoenix v2.4.1", layout="wide", initial_sidebar_state="expanded")
-warnings.filterwarnings('ignore', category=UserWarning)
-warnings.filterwarnings('ignore', category=FutureWarning)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("redshield_phoenix.log")]
-)
-logger = logging.getLogger(__name__)
-
-@dataclass(frozen=True)
-class EnvFactors:
-    is_holiday: bool
-    weather: str
-    traffic_level: float
-    major_event: bool
-    population_density: float
-
-# --- L1: CORE DATA & SIMULATION MODULES ---
-
-@st.cache_resource
-def load_config(config_path: str = "config.json") -> Dict[str, Any]:
-    """Loads and validates the system configuration."""
-    try:
-        if not Path(config_path).exists():
-            logger.warning(f"Config file '{config_path}' not found. Using default configuration.")
-            config = get_default_config()
-        else:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-        mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
-        config['mapbox_api_key'] = mapbox_key if mapbox_key and "YOUR_KEY" not in mapbox_key else None
-        validate_config(config)
-        logger.info("System configuration loaded successfully.")
-        return config
-    except Exception as e:
-        logger.error(f"Failed to load config: {e}")
-        st.error(f"Configuration error: {e}. Using default configuration.")
-        return get_default_config()
-
-def get_default_config() -> Dict[str, Any]:
-    """Returns a default configuration."""
-    return {
-        "mapbox_api_key": None,
-        "data": {
-            "zones": {
-                "Centro": {"polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]], "prior_risk": 0.7, "population": 50000},
-                "Otay": {"polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], "prior_risk": 0.4, "population": 30000},
-                "Playas": {"polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], "prior_risk": 0.3, "population": 20000}
-            },
-            "ambulances": {
-                "A01": {"status": "Disponible", "home_base": "Centro", "location": [32.53, -117.04]},
-                "A02": {"status": "Disponible", "home_base": "Otay", "location": [32.535, -116.965]},
-                "A03": {"status": "En Misión", "home_base": "Playas", "location": [32.52, -117.12]}
-            },
-            "distributions": {# RedShield_Phoenix_Documented.py
-# VERSION 2.4.2 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
-#
-# This version enhances the Phoenix Architecture to focus on predicting medical emergencies (trauma and disease)
-# for multiple time horizons (0.5, 1, 3, 6, 12, 24, 72, 144 hours) to optimize resource allocation and
-# infrastructure readiness. Adds Ensemble Risk Fusion methodology for robust, sensitive predictions.
-#
-# KEY ENHANCEMENTS (v2.4.2):
+# KEY ENHANCEMENTS (v2.4.3):
 # 1. [METHODOLOGY] Added Ensemble Risk Fusion (ERF) to combine all predictive methods, weighted by predictive quality.
 # 2. [KPI] Added Ensemble Risk Score to integrate outputs for robust, sensitive risk assessment.
 # 3. [AUTHENTICATION] Removed authentication and role-based access for streamlined access.
@@ -151,6 +18,7 @@ def get_default_config() -> Dict[str, Any]:
 # 10. [FIX] Corrected TypeError in fetch_real_time_incidents by converting location dictionaries to shapely Point objects.
 # 11. [FIX] Handled AttributeError in main by checking None return from plot_risk_heatmap before calling st_folium.
 # 12. [FIX] Enhanced fetch_real_time_incidents to validate location data and ensure shapely Point objects, preventing TypeError in GeoDataFrame.
+# 13. [FIX] Fixed SyntaxError in get_default_config by ensuring all dictionary braces are properly closed.
 #
 # PREVIOUS FEATURES (v2.4):
 # - Fixed TypeError in geometry handling for GeoDataFrame.
@@ -158,7 +26,7 @@ def get_default_config() -> Dict[str, Any]:
 # - Advanced modeling, real-time data integration, resource optimization, PDF reports, and robust error handling.
 #
 """
-RedShield AI: Phoenix Architecture v2.4.2
+RedShield AI: Phoenix Architecture v2.4.3
 A commercial-grade predictive intelligence engine for urban emergency response.
 Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
 """
@@ -210,7 +78,7 @@ except ImportError:
     VariableElimination = None
 
 # --- L0: SYSTEM CONFIGURATION & INITIALIZATION ---
-st.set_page_config(page_title="RedShield AI: Phoenix v2.4.2", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v2.4.3", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 logging.basicConfig(
@@ -256,9 +124,21 @@ def get_default_config() -> Dict[str, Any]:
         "mapbox_api_key": None,
         "data": {
             "zones": {
-                "Centro": {"polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]], "prior_risk": 0.7, "population": 50000},
-                "Otay": {"polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]], "prior_risk": 0.4, "population": 30000},
-                "Playas": {"polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]], "prior_risk": 0.3, "population": 20000}
+                "Centro": {
+                    "polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]],
+                    "prior_risk": 0.7,
+                    "population": 50000
+                },
+                "Otay": {
+                    "polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]],
+                    "prior_risk": 0.4,
+                    "population": 30000
+                },
+                "Playas": {
+                    "polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]],
+                    "prior_risk": 0.3,
+                    "population": 20000
+                }
             },
             "ambulances": {
                 "A01": {"status": "Disponible", "home_base": "Centro", "location": [32.53, -117.04]},
@@ -279,7 +159,7 @@ def get_default_config() -> Dict[str, Any]:
             },
             "real_time_api": {
                 "endpoint": "http://localhost:8000/sample_api_response.json",
-                "api_key": null
+                "api_key": None
             }
         },
         "model_params": {
@@ -297,9 +177,11 @@ def get_default_config() -> Dict[str, Any]:
                 "MajorEvent": {"card": 2, "values": [[0.8], [0.2]], "evidence": None, "evidence_card": None},
                 "IncidentRate": {
                     "card": 3,
-                    "values": [[0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2], 
-                               [0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5], 
-                               [0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3]],
+                    "values": [
+                        [0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2],
+                        [0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5],
+                        [0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3]
+                    ],
                     "evidence": ["Holiday", "Weather", "MajorEvent"],
                     "evidence_card": [2, 2, 2]
                 }
@@ -626,13 +508,11 @@ class PredictiveAnalyticsEngine:
         if kpi_df.empty:
             return {zone: 0.0 for zone in self.dm.zones}
 
-        # Normalize KPI values to [0,1] for comparability
         def normalize(series):
             min_val = series.min()
             max_val = max(series.max(), 1e-9)
             return (series - min_val) / (max_val - min_val + 1e-9)
 
-        # Extract relevant KPIs
         scores = {}
         for zone in self.dm.zones:
             zone_kpi = kpi_df[kpi_df['Zone'] == zone]
@@ -640,30 +520,21 @@ class PredictiveAnalyticsEngine:
                 scores[zone] = 0.0
                 continue
 
-            # Collect normalized contributions
             contributions = []
-            # Hawkes: Trauma Clustering Score
             contributions.append(normalize(zone_kpi['Trauma Clustering Score'].iloc[0]) * self.method_weights['hawkes'])
-            # SIR: Disease Surge Score
             contributions.append(normalize(zone_kpi['Disease Surge Score'].iloc[0]) * self.method_weights['sir'])
-            # Bayesian: Bayesian Confidence Score (if available)
             if PGMPY_AVAILABLE:
                 contributions.append(normalize(zone_kpi['Bayesian Confidence Score'].iloc[0]) * self.method_weights['bayesian'])
-            # Graph: Spatial Spillover Risk
             contributions.append(normalize(zone_kpi['Spatial Spillover Risk'].iloc[0]) * self.method_weights['graph'])
-            # Chaos: Chaos Sensitivity Score
             chaos_score = normalize(zone_kpi['Chaos Sensitivity Score'].iloc[0])
-            # Amplify chaos contribution if historical variance is high
             if not historical_data.empty:
                 incident_counts = [len(h['incidents']) for h in historical_data]
                 chaos_amplifier = 1.5 if np.var(incident_counts) > np.mean(incident_counts) else 1.0
             else:
                 chaos_amplifier = 1.0
             contributions.append(chaos_score * chaos_amplifier * self.method_weights['chaos'])
-            # Information Theory: Risk Entropy and Anomaly Score
             contributions.append(normalize(zone_kpi['Risk Entropy'].iloc[0]) * self.method_weights['info'] * 0.5)
             contributions.append(normalize(zone_kpi['Anomaly Score'].iloc[0]) * self.method_weights['info'] * 0.5)
-            # TCNN: Use short-term forecast (3h) if available
             if TORCH_AVAILABLE and hasattr(self, 'forecast_df') and not self.forecast_df.empty:
                 zone_forecast = self.forecast_df[(self.forecast_df['Zone'] == zone) & (self.forecast_df['Horizon (Hours)'] == 3)]
                 if not zone_forecast.empty:
@@ -673,14 +544,10 @@ class PredictiveAnalyticsEngine:
                     contributions.append(0.0)
             else:
                 contributions.append(normalize(zone_kpi['Incident Probability'].iloc[0]) * self.method_weights['tcnn'])
-            # Game Theory: Resource Adequacy Index (inverted, lower is riskier)
             contributions.append((1 - normalize(zone_kpi['Resource Adequacy Index'].iloc[0])) * self.method_weights['game'])
-            # Copula: Trauma-Disease Correlation
             contributions.append(normalize(zone_kpi['Trauma-Disease Correlation'].iloc[0]) * self.method_weights['copula'])
 
-            # Compute weighted sum
             scores[zone] = np.sum(contributions)
-            # Ensure score is in [0,1]
             scores[zone] = min(max(scores[zone], 0.0), 1.0)
 
         return scores
@@ -921,7 +788,6 @@ class StrategicAdvisor:
         if not available_ambulances:
             return []
 
-        # Combine current ensemble risk and forecasted risks (weighted by horizon proximity)
         weights = {0.5: 0.3, 1: 0.25, 3: 0.2, 6: 0.15, 12: 0.1, 24: 0.08, 72: 0.07, 144: 0.05}
         deficits = pd.Series(0.0, index=self.dm.zones)
         for zone in self.dm.zones:
@@ -1049,16 +915,14 @@ class VisualizationSuite:
 
         m = folium.Map(location=[32.53, -117.04], zoom_start=12, tiles="OpenStreetMap")
         
-        # Normalize risk values for coloring
         min_val = kpi_df[risk_type].min()
         max_val = max(kpi_df[risk_type].max(), 1e-9)
         norm = lambda x: (x - min_val) / (max_val - min_val + 1e-9)
 
-        # Add zone polygons with risk-based coloring
         for zone, row in dm.zones_gdf.iterrows():
             risk_value = kpi_df.loc[kpi_df['Zone'] == zone, risk_type].iloc[0] if zone in kpi_df['Zone'].values else 0
             color_intensity = norm(risk_value)
-            color = f'#{int(255 * color_intensity):02x}0000'  # Red gradient
+            color = f'#{int(255 * color_intensity):02x}0000'
             folium.Polygon(
                 locations=[[lat, lon] for lat, lon in config['data']['zones'][zone]['polygon']],
                 color='blue',
@@ -1068,7 +932,6 @@ class VisualizationSuite:
                 popup=f"{zone}: {risk_type} = {risk_value:.3f}"
             ).add_to(m)
 
-        # Add ambulance markers
         for amb_id, amb in dm.ambulances.items():
             folium.Marker(
                 location=[amb['location'].y, amb['location'].x],
@@ -1076,7 +939,7 @@ class VisualizationSuite:
                 icon=folium.Icon(color='green' if amb['status'] == 'Disponible' else 'red')
             ).add_to(m)
 
-        return m  # Return folium.Map object
+        return m
 
 # --- L6: DOCUMENTATION & EXPLANATION MODULE ---
 
@@ -1200,8 +1063,8 @@ def initialize_system(config: Dict[str, Any]) -> Tuple[DataManager, PredictiveAn
 def main():
     """Main application entry point."""
     try:
-        st.title("RedShield AI: Phoenix Architecture v2.4.2")
-        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.2")
+        st.title("RedShield AI: Phoenix Architecture v2.4.3")
+        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.3")
 
         config = load_config()
         dm, predictor, sim_engine, advisor = initialize_system(config)
