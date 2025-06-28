@@ -3,6 +3,8 @@
 #
 # This version enhances the Phoenix Architecture to commercial-grade quality with advanced mathematical models
 # for the heuristic, stochastic, and chaotic nature of medical emergencies (trauma and disease).
+# Updated to use OpenStreetMap with Leaflet.js (via folium) for geospatial visualizations and local data
+# for incident processing, removing dependencies on Mapbox API key and real-time API key.
 #
 # KEY ENHANCEMENTS (v2.3):
 # 1. [MODELING] Added Marked Hawkes Process for trauma emergencies to capture clustering.
@@ -11,6 +13,8 @@
 # 4. [MODELING] Added Copula-Based Correlation to model trauma-disease dependencies.
 # 5. [ANALYTICS] Added Trauma Clustering Score and Disease Surge Score KPIs.
 # 6. [FORECASTING] Enhanced risk forecasting to differentiate trauma and disease dynamics.
+# 7. [VISUALIZATION] Replaced Mapbox with OpenStreetMap and Leaflet.js (via streamlit-folium).
+# 8. [DATA] Replaced real-time API with local sample_api_response.json for incident data.
 #
 # PREVIOUS FEATURES (v2.2):
 # - Real-time data integration, resource optimization, authentication, PDF reports, and robust error handling.
@@ -44,6 +48,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib.styles import getSampleStyleSheet
 import io
 from scipy.stats import norm
+import folium
+from streamlit_folium import st_folium
 
 # Advanced Dependencies (optional, with fallbacks)
 try:
@@ -256,8 +262,8 @@ def get_default_config() -> Dict[str, Any]:
                 ]
             },
             "real_time_api": {
-                "endpoint": "https://api.example.com/incidents",
-                "api_key": "YOUR_API_KEY"
+                "endpoint": "http://localhost:8000/sample_api_response.json",
+                "api_key": null
             }
         },
         "model_params": {
@@ -284,8 +290,8 @@ def get_default_config() -> Dict[str, Any]:
             }
         },
         "tcnn_params": {
-            "input_size": 7,  # Increased to include new KPIs
-            "output_size": 6,  # Trauma and disease forecasts for 3 hours
+            "input_size": 7,
+            "output_size": 6,
             "channels": [16, 32, 64]
         }
     }
@@ -381,31 +387,60 @@ class DataManager:
         return ambulances
 
     def fetch_real_time_incidents(self, api_config: Dict) -> List[Dict]:
-        """Fetches real-time incident data from an external API."""
+        """Fetches real-time incident data from a local JSON file or external API."""
+        endpoint = api_config.get('endpoint', '')
         try:
-            endpoint = api_config.get('endpoint', '')
-            api_key = api_config.get('api_key', '')
-            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-            response = requests.get(endpoint, headers=headers, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            incidents = []
-            for inc in data.get('incidents', []):
-                if 'location' in inc and 'type' in inc and 'triage' in inc:
-                    lat, lon = inc['location'].get('lat'), inc['location'].get('lon')
-                    if lat and lon and inc['type'] in self.data_config['distributions']['incident_type'] and inc['triage'] in self.data_config['distributions']['triage']:
-                        incidents.append({
-                            'id': inc.get('id', f"RT-{len(incidents)}"),
-                            'type': inc['type'],
-                            'triage': inc['triage'],
-                            'location': Point(lon, lat),
-                            'timestamp': inc.get('timestamp', datetime.utcnow().isoformat())
-                        })
-            logger.info(f"Fetched {len(incidents)} real-time incidents.")
-            return incidents
+            if endpoint.startswith('http://localhost'):
+                with open('sample_api_response.json', 'r') as f:
+                    data = json.load(f)
+                    incidents = data.get('incidents', [])
+                    logger.info(f"Loaded {len(incidents)} incidents from local sample_api_response.json.")
+                    return incidents
+            else:
+                headers = {"Authorization": f"Bearer {api_config.get('api_key', '')}"} if api_config.get('api_key') else {}
+                response = requests.get(endpoint, headers=headers, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+                incidents = []
+                for inc in data.get('incidents', []):
+                    if 'location' in inc and 'type' in inc and 'triage' in inc:
+                        lat, lon = inc['location'].get('lat'), inc['location'].get('lon')
+                        if lat and lon and inc['type'] in self.data_config['distributions']['incident_type'] and inc['triage'] in self.data_config['distributions']['triage']:
+                            incidents.append({
+                                'id': inc.get('id', f"RT-{len(incidents)}"),
+                                'type': inc['type'],
+                                'triage': inc['triage'],
+                                'location': Point(lon, lat),
+                                'timestamp': inc.get('timestamp', datetime.utcnow().isoformat())
+                            })
+                logger.info(f"Fetched {len(incidents)} real-time incidents from {endpoint}.")
+                return incidents
         except Exception as e:
-            logger.warning(f"Failed to fetch real-time incidents: {e}. Falling back to synthetic data.")
-            return []
+            logger.warning(f"Failed to fetch incidents from {endpoint}: {e}. Falling back to synthetic data.")
+            return self._generate_synthetic_incidents()
+
+    def _generate_synthetic_incidents(self) -> List[Dict]:
+        """Generates synthetic incident data for fallback."""
+        intensity = 5.0  # Base rate for Poisson process
+        num_incidents = max(0, int(np.random.poisson(intensity)))
+        city_boundary = self.zones_gdf.unary_union if not self.zones_gdf.empty else None
+        bounds = city_boundary.bounds if city_boundary else (-117.13, 32.45, -116.95, 32.54)
+        incidents = []
+        for i in range(num_incidents):
+            lon = np.random.uniform(bounds[0], bounds[2])
+            lat = np.random.uniform(bounds[1], bounds[3])
+            point = Point(lon, lat)
+            if city_boundary and not city_boundary.contains(point):
+                continue
+            incidents.append({
+                'id': f"SYN-{i}",
+                'type': np.random.choice(list(self.data_config['distributions']['incident_type'].keys()), p=list(self.data_config['distributions']['incident_type'].values())),
+                'triage': np.random.choice(list(self.data_config['distributions']['triage'].keys()), p=list(self.data_config['distributions']['triage'].values())),
+                'location': point,
+                'timestamp': datetime.utcnow().isoformat()
+            })
+        logger.info(f"Generated {len(incidents)} synthetic incidents.")
+        return incidents
 
 # --- L4: SIMULATION & PREDICTIVE ENGINES ---
 
@@ -858,36 +893,42 @@ class VisualizationSuite:
         return fig
 
     @staticmethod
-    def plot_risk_heatmap(kpi_df: pd.DataFrame, dm: DataManager, config: Dict, risk_type: str = 'Incident Probability') -> go.Figure:
-        """Creates a risk heatmap for specified risk type."""
+    def plot_risk_heatmap(kpi_df: pd.DataFrame, dm: DataManager, config: Dict, risk_type: str = 'Incident Probability') -> Any:
+        """Creates a risk heatmap using OpenStreetMap and Folium."""
         if kpi_df.empty or dm.zones_gdf.empty:
-            fig = go.Figure()
-            fig.add_annotation(text="No geospatial data available. Run a predictive cycle to generate the map.", showarrow=False, font=dict(size=14))
-            return fig
+            st.warning("No geospatial data available. Run a predictive cycle to generate the map.")
+            return None
 
-        fig = go.Figure(go.Choroplethmapbox(
-            geojson=json.loads(dm.zones_gdf.geometry.to_json()),
-            locations=kpi_df['Zone'],
-            z=kpi_df[risk_type],
-            colorscale="Reds",
-            zmin=0,
-            zmax=max(0.1, kpi_df[risk_type].max()),
-            marker_opacity=0.6,
-            hoverinfo='location+z',
-            name=risk_type
-        ))
+        m = folium.Map(location=[32.53, -117.04], zoom_start=12, tiles="OpenStreetMap")
+        
+        # Normalize risk values for coloring
+        min_val = kpi_df[risk_type].min()
+        max_val = max(kpi_df[risk_type].max(), 1e-9)
+        norm = lambda x: (x - min_val) / (max_val - min_val + 1e-9)
 
-        layout_args = {
-            "title": f"<b>{risk_type} Heatmap</b>",
-            "mapbox": {"center": {"lat": 32.5, "lon": -117.02}, "zoom": 10.5},
-            "margin": {"r": 0, "t": 40, "l": 0, "b": 0}
-        }
-        mapbox_token = config.get('mapbox_api_key')
-        layout_args["mapbox_style"] = "dark" if mapbox_token else "carto-darkmatter"
-        if mapbox_token:
-            layout_args["mapbox_accesstoken"] = mapbox_token
-        fig.update_layout(**layout_args)
-        return fig
+        # Add zone polygons with risk-based coloring
+        for zone, row in dm.zones_gdf.iterrows():
+            risk_value = kpi_df.loc[kpi_df['Zone'] == zone, risk_type].iloc[0] if zone in kpi_df['Zone'].values else 0
+            color_intensity = norm(risk_value)
+            color = f'#{int(255 * color_intensity):02x}0000'  # Red gradient
+            folium.Polygon(
+                locations=[[lat, lon] for lat, lon in config['data']['zones'][zone]['polygon']],
+                color='blue',
+                fill=True,
+                fill_color=color,
+                fill_opacity=0.6,
+                popup=f"{zone}: {risk_type} = {risk_value:.3f}"
+            ).add_to(m)
+
+        # Add ambulance markers
+        for amb_id, amb in dm.ambulances.items():
+            folium.Marker(
+                location=[amb['location'].y, amb['location'].x],
+                popup=f"Ambulance {amb_id}: {amb['status']}",
+                icon=folium.Icon(color='green' if amb['status'] == 'Disponible' else 'red')
+            ).add_to(m)
+
+        return st_folium(m, width=700, height=500)
 
     @staticmethod
     def plot_forecast_trend(forecast_df: pd.DataFrame) -> go.Figure:
@@ -1015,7 +1056,7 @@ def main():
             with tab2:
                 st.header("Live Risk & Incident Map")
                 risk_type = st.selectbox("Select Risk Type for Heatmap", ["Incident Probability", "Trauma Clustering Score", "Disease Surge Score"])
-                st.plotly_chart(VisualizationSuite.plot_risk_heatmap(kpi_df, dm, config, risk_type), use_container_width=True)
+                st_folium(VisualizationSuite.plot_risk_heatmap(kpi_df, dm, config, risk_type), width=700, height=500)
 
             with tab3:
                 st.header("Risk Forecast (Next 3 Hours)")
@@ -1036,7 +1077,7 @@ def main():
                 st.plotly_chart(VisualizationSuite.plot_kpi_dashboard(pd.DataFrame()), use_container_width=True)
             with tab2:
                 st.info("Map will be generated after the first predictive cycle.")
-                st.plotly_chart(VisualizationSuite.plot_risk_heatmap(pd.DataFrame(), dm, config), use_container_width=True)
+                st_folium(VisualizationSuite.plot_risk_heatmap(pd.DataFrame(), dm, config), width=700, height=500)
             with tab3:
                 st.info("Forecast will be generated after the first predictive cycle.")
                 st.plotly_chart(VisualizationSuite.plot_forecast_trend(pd.DataFrame()), use_container_width=True)
@@ -1044,6 +1085,9 @@ def main():
     except Exception as e:
         logger.error(f"Critical error in main: {e}", exc_info=True)
         st.error(f"A fatal system error occurred: {e}. Check logs for details.")
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
