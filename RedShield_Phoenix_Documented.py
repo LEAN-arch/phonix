@@ -16,6 +16,7 @@
 # 8. [VISUALIZATION] Uses OpenStreetMap with Leaflet.js (via folium) for geospatial visualizations.
 # 9. [DATA] Uses local sample_api_response.json for incident data.
 # 10. [FIX] Corrected TypeError in fetch_real_time_incidents by converting location dictionaries to shapely Point objects.
+# 11. [FIX] Handled AttributeError in main by checking None return from plot_risk_heatmap before calling st_folium.
 #
 # PREVIOUS FEATURES (v2.4):
 # - Fixed TypeError in geometry handling for GeoDataFrame.
@@ -930,43 +931,7 @@ class VisualizationSuite:
                 icon=folium.Icon(color='green' if amb['status'] == 'Disponible' else 'red')
             ).add_to(m)
 
-        return st_folium(m, width=700, height=500)
-
-    @staticmethod
-    def plot_forecast_trend(forecast_df: pd.DataFrame) -> go.Figure:
-        """Plots forecasted trauma and disease risk trends over multiple time horizons."""
-        if forecast_df.empty:
-            fig = go.Figure()
-            fig.add_annotation(text="No forecast data available.", showarrow=False, font=dict(size=14))
-            return fig
-
-        fig = go.Figure()
-        for zone in forecast_df['Zone'].unique():
-            zone_data = forecast_df[forecast_df['Zone'] == zone]
-            fig.add_trace(go.Scatter(
-                x=zone_data['Horizon (Hours)'],
-                y=zone_data['Trauma Risk'],
-                mode='lines+markers',
-                name=f"{zone} (Trauma)",
-                line=dict(dash='solid'),
-                hovertemplate='Horizon: %{x} hr<br>Trauma Risk: %{y:.3f}'
-            ))
-            fig.add_trace(go.Scatter(
-                x=zone_data['Horizon (Hours)'],
-                y=zone_data['Disease Risk'],
-                mode='lines+markers',
-                name=f"{zone} (Disease)",
-                line=dict(dash='dash'),
-                hovertemplate='Horizon: %{x} hr<br>Disease Risk: %{y:.3f}'
-            ))
-        fig.update_layout(
-            title="<b>Risk Forecast Trend (Multiple Horizons)</b>",
-            xaxis_title="Time Horizon (Hours)",
-            yaxis_title="Forecasted Risk",
-            margin=dict(l=10, r=10, t=40, b=10),
-            xaxis=dict(type='log', title="Time Horizon (Hours)", tickvals=[0.5, 1, 3, 6, 12, 24, 72, 144])
-        )
-        return fig
+        return m  # Return folium.Map object
 
 # --- L6: DOCUMENTATION & EXPLANATION MODULE ---
 
@@ -1143,7 +1108,11 @@ def main():
             with tab2:
                 st.header("Live Risk & Incident Map")
                 risk_type = st.selectbox("Select Risk Type for Heatmap", ["Ensemble Risk Score", "Incident Probability", "Trauma Clustering Score", "Disease Surge Score"])
-                st_folium(VisualizationSuite.plot_risk_heatmap(kpi_df, dm, config, risk_type), width=700, height=500)
+                folium_map = VisualizationSuite.plot_risk_heatmap(kpi_df, dm, config, risk_type)
+                if folium_map is not None:
+                    st_folium(folium_map, width=700, height=500)
+                else:
+                    st.warning("No geospatial data available. Run a predictive cycle to generate the map.")
 
             with tab3:
                 st.header("Risk Forecast (Multiple Horizons)")
@@ -1164,7 +1133,11 @@ def main():
                 st.plotly_chart(VisualizationSuite.plot_kpi_dashboard(pd.DataFrame()), use_container_width=True)
             with tab2:
                 st.info("Map will be generated after the first predictive cycle.")
-                st_folium(VisualizationSuite.plot_risk_heatmap(pd.DataFrame(), dm, config), width=700, height=500)
+                folium_map = VisualizationSuite.plot_risk_heatmap(pd.DataFrame(), dm, config)
+                if folium_map is not None:
+                    st_folium(folium_map, width=700, height=500)
+                else:
+                    st.warning("No geospatial data available. Run a predictive cycle to generate the map.")
             with tab3:
                 st.info("Forecast will be generated after the first predictive cycle.")
                 st.plotly_chart(VisualizationSuite.plot_forecast_trend(pd.DataFrame()), use_container_width=True)
