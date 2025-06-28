@@ -9,7 +9,6 @@ requests==2.31.0
 reportlab==4.0.4 
 scipy==1.10.1 
 torch==2.0.1  
-python_version >= "3.8" 
 pgmpy==0.1.22 
 streamlit-folium==0.20.0 
 folium==0.15.1
