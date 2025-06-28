@@ -1,0 +1,101 @@
+{
+    "mapbox_api_key": "YOUR_MAPBOX_API_KEY",
+    "data": {
+        "zones": {
+            "Centro": {
+                "polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]],
+                "prior_risk": 0.7,
+                "population": 50000
+            },
+            "Otay": {
+                "polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]],
+                "prior_risk": 0.4,
+                "population": 30000
+            },
+            "Playas": {
+                "polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]],
+                "prior_risk": 0.3,
+                "population": 20000
+            }
+        },
+        "ambulances": {
+            "A01": {"status": "Disponible", "home_base": "Centro", "location": [32.53, -117.04]},
+            "A02": {"status": "Disponible", "home_base": "Otay", "location": [32.535, -116.965]},
+            "A03": {"status": "En Misión", "home_base": "Playas", "location": [32.52, -117.12]},
+            "A04": {"status": "Disponible", "home_base": "Centro", "location": [32.525, -117.035]}
+        },
+        "distributions": {
+            "zone": {"Centro": 0.5, "Otay": 0.3, "Playas": 0.2},
+            "incident_type": {"Trauma": 0.4, "Medical": 0.6},
+            "triage": {"Red": 0.1, "Yellow": 0.3, "Green": 0.6}
+        },
+        "road_network": {
+            "edges": [
+                ["Centro", "Otay", 5],
+                ["Otay", "Playas", 8],
+                ["Playas", "Centro", 10]
+            ]
+        },
+        "real_time_api": {
+            "endpoint": "https://api.example.com/incidents",
+            "api_key": "YOUR_API_KEY"
+        }
+    },
+    "model_params": {
+        "hawkes_process": {
+            "kappa": 0.5,
+            "beta": 1.0,
+            "trauma_weight": 1.5
+        },
+        "sir_model": {
+            "beta": 0.3,
+            "gamma": 0.1,
+            "noise_scale": 0.05
+        },
+        "laplacian_diffusion_factor": 0.1,
+        "response_time_penalty": 3.0,
+        "copula_correlation": 0.2
+    },
+    "bayesian_network": {
+        "structure": [
+            ["Holiday", "IncidentRate"],
+            ["Weather", "IncidentRate"],
+            ["MajorEvent", "IncidentRate"]
+        ],
+        "cpds": {
+            "Holiday": {
+                "card": 2,
+                "values": [[0.9], [0.1]],
+                "evidence": null,
+                "evidence_card": null
+            },
+            "Weather": {
+                "card": 2,
+                "values": [[0.7], [0.3]],
+                "evidence": null,
+                "evidence_card": null
+            },
+            "MajorEvent": {
+                "card": 2,
+                "values": [[0.8], [0.2]],
+                "evidence": null,
+                "evidence_card": null
+            },
+            "IncidentRate": {
+                "card": 3,
+                "values": [
+                    [0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2],
+                    [0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5],
+                    [0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3]
+                ],
+                "evidence": ["Holiday", "Weather", "MajorEvent"],
+                "evidence_card": [2, 2, 2]
+            }
+        }
+    },
+    "tcnn_params": {
+        "input_size": 7,
+        "output_size": 6,
+        "channels": [16, 32, 64]
+    }
+}
