@@ -1,5 +1,5 @@
 {
-    "mapbox_api_key": "YOUR_MAPBOX_API_KEY",
+    "mapbox_api_key": null,
     "data": {
         "zones": {
             "Centro": {
@@ -37,8 +37,8 @@
             ]
         },
         "real_time_api": {
-            "endpoint": "https://api.example.com/incidents",
-            "api_key": "YOUR_API_KEY"
+            "endpoint": "http://localhost:8000/sample_api_response.json",
+            "api_key": null
         }
     },
     "model_params": {
