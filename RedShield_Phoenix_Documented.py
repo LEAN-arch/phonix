@@ -1,11 +1,11 @@
 # RedShield_Phoenix_Documented.py
-# VERSION 2.4.4 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
+# VERSION 2.4.5 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
 #
 # This version enhances the Phoenix Architecture to focus on predicting medical emergencies (trauma and disease)
 # for multiple time horizons (0.5, 1, 3, 6, 12, 24, 72, 144 hours) to optimize resource allocation and
 # infrastructure readiness. Adds Ensemble Risk Fusion methodology for robust, sensitive predictions.
 #
-# KEY ENHANCEMENTS (v2.4.4):
+# KEY ENHANCEMENTS (v2.4.5):
 # 1. [METHODOLOGY] Added Ensemble Risk Fusion (ERF) to combine all predictive methods, weighted by predictive quality.
 # 2. [KPI] Added Ensemble Risk Score to integrate outputs for robust, sensitive risk assessment.
 # 3. [AUTHENTICATION] Removed authentication and role-based access for streamlined access.
@@ -20,6 +20,8 @@
 # 12. [FIX] Enhanced fetch_real_time_incidents to validate location data and ensure shapely Point objects, preventing TypeError in GeoDataFrame.
 # 13. [FIX] Fixed SyntaxError in get_default_config by ensuring all dictionary braces are properly closed.
 # 14. [FIX] Added plot_forecast_trend method to VisualizationSuite to handle forecasting visualizations, fixing AttributeError.
+# 15. [FIX] Fixed TypeError in calculate_ensemble_risk_score by ensuring historical_data is processed as a list of dictionaries.
+# 16. [FIX] Fixed ValueError in _model_event_correlations by aligning trauma_dist and disease_dist with zones and dynamically sizing covariance matrix.
 #
 # PREVIOUS FEATURES (v2.4):
 # - Fixed TypeError in geometry handling for GeoDataFrame.
@@ -27,7 +29,7 @@
 # - Advanced modeling, real-time data integration, resource optimization, PDF reports, and robust error handling.
 #
 """
-RedShield AI: Phoenix Architecture v2.4.4
+RedShield AI: Phoenix Architecture v2.4.5
 A commercial-grade predictive intelligence engine for urban emergency response.
 Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
 """
@@ -79,7 +81,7 @@ except ImportError:
     VariableElimination = None
 
 # --- L0: SYSTEM CONFIGURATION & INITIALIZATION ---
-st.set_page_config(page_title="RedShield AI: Phoenix v2.4.4", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v2.4.5", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 logging.basicConfig(
@@ -190,7 +192,7 @@ def get_default_config() -> Dict[str, Any]:
         },
         "tcnn_params": {
             "input_size": 7,
-            "output_size": 16,  # 8 horizons (0.5, 1, 3, 6, 12, 24, 72, 144) for trauma and disease
+            "output_size": 16,  # 8 horizons (0.5, 1, 3, 6, 12, 24, NICE, 144) for trauma and disease
             "channels": [16, 32, 64]
         }
     }
@@ -504,7 +506,7 @@ class PredictiveAnalyticsEngine:
             logger.warning(f"Failed to initialize TCNN: {e}. Disabling.")
             return None
 
-    def calculate_ensemble_risk_score(self, kpi_df: pd.DataFrame, historical_data: pd.DataFrame) -> Dict[str, float]:
+    def calculate_ensemble_risk_score(self, kpi_df: pd.DataFrame, historical_data: List[Dict]) -> Dict[str, float]:
         """Computes a weighted ensemble risk score combining all methodologies."""
         if kpi_df.empty:
             return {zone: 0.0 for zone in self.dm.zones}
@@ -528,9 +530,13 @@ class PredictiveAnalyticsEngine:
                 contributions.append(normalize(zone_kpi['Bayesian Confidence Score'].iloc[0]) * self.method_weights['bayesian'])
             contributions.append(normalize(zone_kpi['Spatial Spillover Risk'].iloc[0]) * self.method_weights['graph'])
             chaos_score = normalize(zone_kpi['Chaos Sensitivity Score'].iloc[0])
-            if not historical_data.empty:
-                incident_counts = [len(h['incidents']) for h in historical_data]
-                chaos_amplifier = 1.5 if np.var(incident_counts) > np.mean(incident_counts) else 1.0
+            if historical_data:
+                try:
+                    incident_counts = [len(h['incidents']) for h in historical_data if isinstance(h, dict) and 'incidents' in h]
+                    chaos_amplifier = 1.5 if np.var(incident_counts) > np.mean(incident_counts) else 1.0
+                except Exception as e:
+                    logger.warning(f"Error computing chaos amplifier: {e}. Using default value.")
+                    chaos_amplifier = 1.0
             else:
                 chaos_amplifier = 1.0
             contributions.append(chaos_score * chaos_amplifier * self.method_weights['chaos'])
@@ -553,7 +559,7 @@ class PredictiveAnalyticsEngine:
 
         return scores
 
-    def generate_kpis(self, historical_data: pd.DataFrame, env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
+    def generate_kpis(self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
         """Computes KPIs for each zone, including trauma, disease, and ensemble risk scores."""
         if self.bn_model and PGMPY_AVAILABLE:
             inference = VariableElimination(self.bn_model)
@@ -587,7 +593,7 @@ class PredictiveAnalyticsEngine:
 
         hawkes_params = self.config['model_params']['hawkes_process']
         sir_params = self.config['model_params']['sir_model']
-        past_incidents = historical_data['incidents'].sum() if not historical_data.empty else []
+        past_incidents = sum([h.get('incidents', []) for h in historical_data if isinstance(h, dict)], []) if historical_data else []
         trauma_intensity = self._calculate_marked_hawkes_intensity(past_incidents, hawkes_params, 'Trauma')
         disease_intensity = self._calculate_sir_intensity(env_factors, sir_params)
 
@@ -668,15 +674,17 @@ class PredictiveAnalyticsEngine:
             intensity *= 1.2
         return intensity
 
-    def _calculate_lyapunov_exponent(self, historical_data: pd.DataFrame, current_dist: pd.Series) -> float:
+    def _calculate_lyapunov_exponent(self, historical_data: List[Dict], current_dist: pd.Series) -> float:
         """Estimates Lyapunov exponent for chaos detection."""
-        if historical_data.empty or len(historical_data) < 2:
+        if not historical_data or len(historical_data) < 2:
             return 0.0
         try:
             divergences = []
-            for i in range(len(historical_data) - 1):
+            for h in historical_data:
+                if not isinstance(h, dict) or 'incidents' not in h:
+                    continue
                 past_dist = pd.Series(0.0, index=self.dm.zones)
-                for inc in historical_data.iloc[i]['incidents']:
+                for inc in h.get('incidents', []):
                     if inc.get('zone') in past_dist:
                         past_dist[inc['zone']] += 1
                 past_dist = past_dist / (past_dist.sum() + 1e-9)
@@ -709,11 +717,16 @@ class PredictiveAnalyticsEngine:
     def _model_event_correlations(self, trauma_dist: pd.Series, disease_dist: pd.Series) -> float:
         """Models correlations between trauma and disease incidents using a Gaussian copula."""
         try:
+            # Reindex to ensure alignment with zones
+            trauma_dist = trauma_dist.reindex(self.dm.zones, fill_value=0.0)
+            disease_dist = disease_dist.reindex(self.dm.zones, fill_value=0.0)
             u1 = norm.cdf(trauma_dist.values)
             u2 = norm.cdf(disease_dist.values)
             rho = self.copula_rho
-            cov = [[1, rho], [rho, 1]]
-            joint_prob = np.sum(np.dot(u1, np.dot(cov, u2.T)))
+            # Dynamically size the covariance matrix based on number of zones
+            n_zones = len(self.dm.zones)
+            cov = np.ones((n_zones, n_zones)) * rho + np.eye(n_zones) * (1 - rho)
+            joint_prob = np.sum(np.dot(u1.T, np.dot(cov, u2)))
             return min(max(joint_prob, -1.0), 1.0)
         except Exception as e:
             logger.warning(f"Correlation modeling failed: {e}. Returning 0.0.")
@@ -1117,8 +1130,8 @@ def initialize_system(config: Dict[str, Any]) -> Tuple[DataManager, PredictiveAn
 def main():
     """Main application entry point."""
     try:
-        st.title("RedShield AI: Phoenix Architecture v2.4.4")
-        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.4")
+        st.title("RedShield AI: Phoenix Architecture v2.4.5")
+        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.5")
 
         config = load_config()
         dm, predictor, sim_engine, advisor = initialize_system(config)
@@ -1153,7 +1166,7 @@ def main():
                 current_incidents = sim_engine.get_live_state(env_factors, len(st.session_state.history))['incidents']
                 st.session_state.history.append({'incidents': current_incidents, 'timestamp': datetime.utcnow().isoformat()})
                 st.session_state.history = [h for h in st.session_state.history if datetime.fromisoformat(h['timestamp']) > datetime.utcnow() - timedelta(hours=144)]
-                kpi_df = predictor.generate_kpis(pd.DataFrame(st.session_state.history), env_factors, current_incidents)
+                kpi_df = predictor.generate_kpis(st.session_state.history, env_factors, current_incidents)
                 forecast_df = predictor.forecast_risk(kpi_df)
                 recommendations = advisor.recommend_allocations(kpi_df, forecast_df)
 
