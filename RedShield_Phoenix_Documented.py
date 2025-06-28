@@ -1,11 +1,11 @@
 # RedShield_Phoenix_Documented.py
-# VERSION 2.4.3 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
+# VERSION 2.4.4 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING AND ENSEMBLE RISK FUSION
 #
 # This version enhances the Phoenix Architecture to focus on predicting medical emergencies (trauma and disease)
 # for multiple time horizons (0.5, 1, 3, 6, 12, 24, 72, 144 hours) to optimize resource allocation and
 # infrastructure readiness. Adds Ensemble Risk Fusion methodology for robust, sensitive predictions.
 #
-# KEY ENHANCEMENTS (v2.4.3):
+# KEY ENHANCEMENTS (v2.4.4):
 # 1. [METHODOLOGY] Added Ensemble Risk Fusion (ERF) to combine all predictive methods, weighted by predictive quality.
 # 2. [KPI] Added Ensemble Risk Score to integrate outputs for robust, sensitive risk assessment.
 # 3. [AUTHENTICATION] Removed authentication and role-based access for streamlined access.
@@ -19,6 +19,7 @@
 # 11. [FIX] Handled AttributeError in main by checking None return from plot_risk_heatmap before calling st_folium.
 # 12. [FIX] Enhanced fetch_real_time_incidents to validate location data and ensure shapely Point objects, preventing TypeError in GeoDataFrame.
 # 13. [FIX] Fixed SyntaxError in get_default_config by ensuring all dictionary braces are properly closed.
+# 14. [FIX] Added plot_forecast_trend method to VisualizationSuite to handle forecasting visualizations, fixing AttributeError.
 #
 # PREVIOUS FEATURES (v2.4):
 # - Fixed TypeError in geometry handling for GeoDataFrame.
@@ -26,7 +27,7 @@
 # - Advanced modeling, real-time data integration, resource optimization, PDF reports, and robust error handling.
 #
 """
-RedShield AI: Phoenix Architecture v2.4.3
+RedShield AI: Phoenix Architecture v2.4.4
 A commercial-grade predictive intelligence engine for urban emergency response.
 Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
 """
@@ -78,7 +79,7 @@ except ImportError:
     VariableElimination = None
 
 # --- L0: SYSTEM CONFIGURATION & INITIALIZATION ---
-st.set_page_config(page_title="RedShield AI: Phoenix v2.4.3", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v2.4.4", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 logging.basicConfig(
@@ -941,6 +942,59 @@ class VisualizationSuite:
 
         return m
 
+    @staticmethod
+    def plot_forecast_trend(forecast_df: pd.DataFrame) -> go.Figure:
+        """Creates a line plot for trauma and disease risk forecasts across time horizons."""
+        if forecast_df.empty:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No forecast data available. Run a predictive cycle to generate insights.",
+                showarrow=False,
+                font=dict(size=14)
+            )
+            fig.update_layout(
+                title_text="<b>Risk Forecast Trends</b>",
+                margin=dict(l=10, r=10, t=40, b=10)
+            )
+            return fig
+
+        fig = go.Figure()
+        zones = forecast_df['Zone'].unique()
+        horizons = sorted(forecast_df['Horizon (Hours)'].unique())
+
+        for zone in zones:
+            zone_data = forecast_df[forecast_df['Zone'] == zone]
+            trauma_risks = [zone_data[zone_data['Horizon (Hours)'] == h]['Trauma Risk'].iloc[0] if h in zone_data['Horizon (Hours)'].values else 0 for h in horizons]
+            disease_risks = [zone_data[zone_data['Horizon (Hours)'] == h]['Disease Risk'].iloc[0] if h in zone_data['Horizon (Hours)'].values else 0 for h in horizons]
+
+            fig.add_trace(go.Scatter(
+                x=horizons,
+                y=trauma_risks,
+                mode='lines+markers',
+                name=f"{zone} - Trauma Risk",
+                line=dict(dash='solid'),
+                marker=dict(size=8)
+            ))
+            fig.add_trace(go.Scatter(
+                x=horizons,
+                y=disease_risks,
+                mode='lines+markers',
+                name=f"{zone} - Disease Risk",
+                line=dict(dash='dash'),
+                marker=dict(size=8)
+            ))
+
+        fig.update_layout(
+            title="<b>Risk Forecast Trends</b>",
+            xaxis_title="Time Horizon (Hours)",
+            yaxis_title="Risk Score",
+            xaxis=dict(type='log', tickvals=horizons, ticktext=[str(h) for h in horizons]),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+            margin=dict(l=10, r=10, t=80, b=10),
+            hovermode='x unified'
+        )
+        return fig
+
 # --- L6: DOCUMENTATION & EXPLANATION MODULE ---
 
 class Documentation:
@@ -1063,8 +1117,8 @@ def initialize_system(config: Dict[str, Any]) -> Tuple[DataManager, PredictiveAn
 def main():
     """Main application entry point."""
     try:
-        st.title("RedShield AI: Phoenix Architecture v2.4.3")
-        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.3")
+        st.title("RedShield AI: Phoenix Architecture v2.4.4")
+        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4.4")
 
         config = load_config()
         dm, predictor, sim_engine, advisor = initialize_system(config)
