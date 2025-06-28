@@ -1,29 +1,27 @@
 # RedShield_Phoenix_Documented.py
-# VERSION 2.3 - PHOENIX ARCHITECTURE WITH ADVANCED EMERGENCY MODELING
+# VERSION 2.4 - PHOENIX ARCHITECTURE WITH ENHANCED FORECASTING
 #
-# This version enhances the Phoenix Architecture to commercial-grade quality with advanced mathematical models
-# for the heuristic, stochastic, and chaotic nature of medical emergencies (trauma and disease).
-# Updated to use OpenStreetMap with Leaflet.js (via folium) for geospatial visualizations and local data
-# for incident processing, removing dependencies on Mapbox API key and real-time API key.
+# This version enhances the Phoenix Architecture to focus on predicting medical emergencies (trauma and disease)
+# for multiple time horizons (0.5, 1, 3, 6, 12, 24, 72, 144 hours) to optimize resource allocation and
+# infrastructure readiness. Authentication is removed for immediate access.
 #
-# KEY ENHANCEMENTS (v2.3):
-# 1. [MODELING] Added Marked Hawkes Process for trauma emergencies to capture clustering.
-# 2. [MODELING] Added Spatio-Temporal SIR Model for disease emergencies to model population dynamics.
-# 3. [MODELING] Added Lyapunov Exponent for chaos detection in fluid, dynamic events.
-# 4. [MODELING] Added Copula-Based Correlation to model trauma-disease dependencies.
-# 5. [ANALYTICS] Added Trauma Clustering Score and Disease Surge Score KPIs.
-# 6. [FORECASTING] Enhanced risk forecasting to differentiate trauma and disease dynamics.
-# 7. [VISUALIZATION] Replaced Mapbox with OpenStreetMap and Leaflet.js (via streamlit-folium).
-# 8. [DATA] Replaced real-time API with local sample_api_response.json for incident data.
-# 9. [FIX] Added unique keys to st.text_input widgets to resolve DuplicateWidgetID error.
+# KEY ENHANCEMENTS (v2.4):
+# 1. [AUTHENTICATION] Removed authentication and role-based access for streamlined access.
+# 2. [FORECASTING] Added multi-horizon forecasting (30 min, 1 hr, 3 hr, 6 hr, 12 hr, 24 hr, 3 days, 6 days).
+# 3. [MODELING] Retained Marked Hawkes Process, Spatio-Temporal SIR Model, Lyapunov Exponent, and Copula-Based Correlation.
+# 4. [UI] Updated forecast visualizations to display all time horizons.
+# 5. [RESOURCES] Enhanced recommendations for ambulance allocation based on multi-horizon risks.
+# 6. [VISUALIZATION] Uses OpenStreetMap with Leaflet.js (via folium) for geospatial visualizations.
+# 7. [DATA] Uses local sample_api_response.json for incident data.
 #
-# PREVIOUS FEATURES (v2.2):
-# - Real-time data integration, resource optimization, authentication, PDF reports, and robust error handling.
+# PREVIOUS FEATURES (v2.3):
+# - Fixed DuplicateWidgetID error with unique keys for st.text_input.
+# - Advanced modeling, real-time data integration, resource optimization, PDF reports, and robust error handling.
 #
 """
-RedShield AI: Phoenix Architecture v2.3
+RedShield AI: Phoenix Architecture v2.4
 A commercial-grade predictive intelligence engine for urban emergency response.
-Fuses advanced modeling for trauma and disease emergencies with real-time data and actionable insights.
+Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
 """
 
 import streamlit as st
@@ -43,7 +41,6 @@ import json
 import random
 import requests
 from datetime import datetime, timedelta
-import hashlib
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib.styles import getSampleStyleSheet
@@ -74,7 +71,7 @@ except ImportError:
     VariableElimination = None
 
 # --- L0: SYSTEM CONFIGURATION & INITIALIZATION ---
-st.set_page_config(page_title="RedShield AI: Phoenix v2.3", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v2.4", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 logging.basicConfig(
@@ -92,128 +89,7 @@ class EnvFactors:
     major_event: bool
     population_density: float
 
-# --- L1: SECURITY & AUTHENTICATION ---
-
-class AuthManager:
-    """Handles user authentication and role-based access control."""
-    def __init__(self):
-        self.users = {
-            "admin": {"password_hash": hashlib.sha256("admin123".encode()).hexdigest(), "role": "admin"},
-            "operator": {"password_hash": hashlib.sha256("operator123".encode()).hexdigest(), "role": "operator"}
-        }
-
-    def authenticate(self, username: str, password: str) -> Optional[Dict]:
-        """Verifies user credentials."""
-        if username in self.users and self.users[username]["password_hash"] == hashlib.sha256(password.encode()).hexdigest():
-            logger.info(f"User '{username}' authenticated successfully.")
-            return {"username": username, "role": self.users[username]["role"]}
-        logger.warning(f"Failed authentication attempt for user '{username}'.")
-        return None
-
-    def has_permission(self, user: Dict, required_role: str) -> bool:
-        """Checks if user has the required role."""
-        return user and user.get("role") in [required_role, "admin"]
-
-# --- L2: DOCUMENTATION & EXPLANATION MODULE ---
-
-class Documentation:
-    """Renders methodological framework and KPI explanations in the UI."""
-    
-    @staticmethod
-    def render_methodology_framework():
-        """Displays a table explaining the integrated mathematical frameworks."""
-        st.header("🧠 I. Integrated Methodological Framework")
-        st.markdown("""
-        The Phoenix Architecture integrates advanced computational methodologies to model the heuristic, stochastic,
-        and chaotic nature of medical emergencies, ensuring robust predictions for trauma and disease events.
-        """)
-        
-        methodology_data = {
-            "Methodology": [
-                "**Marked Hawkes Process**", "**Spatio-Temporal SIR Model**", "**Bayesian Inference**",
-                "**Graph Theory & Network Science**", "**Chaos Theory & Lyapunov Exponent**", "**Information Theory**",
-                "**Deep Learning & Probabilistic ML**", "**Game Theory**", "**Copula-Based Correlation**"
-            ],
-            "Description & Implementation": [
-                "Models trauma emergencies with a **Marked Hawkes Process** in `PredictiveAnalyticsEngine`, capturing spatial-temporal clustering of incidents (e.g., accidents triggering secondary events).",
-                "Models disease emergencies with a **Spatio-Temporal SIR Model** in `PredictiveAnalyticsEngine`, accounting for population dynamics and stochastic transitions.",
-                "Employs a **Discrete Bayesian Network** (`pgmpy`) to infer incident rates from causal factors (weather, holidays, etc.).",
-                "Models the city as a spatial graph in `DataManager`. The **Graph Laplacian (L = D-A)** computes **Spatial Spillover Risk**.",
-                "Uses **Lyapunov Exponent** estimation to enhance the **Chaos Sensitivity Score**, detecting chaotic regimes in emergency dynamics.",
-                "Calculates **Shannon Entropy** and **Kullback-Leibler (KL) Divergence** for system unpredictability and anomaly detection.",
-                "Implements a **Temporal Convolutional Network (TCNN)** for multi-horizon forecasting, with fallback to statistical models if `torch` unavailable.",
-                "Uses a **one-shot game** in `StrategicAdvisor` to optimize resource allocation based on the **Resource Adequacy Index**.",
-                "Models correlations between trauma and disease emergencies using a **Gaussian Copula** in `PredictiveAnalyticsEngine`."
-            ],
-            "Mathematical Principle": [
-                "`λ(t, z) = μ(t, z) + Σ κ(z, z_i) e^(-β(t-t_i))`", 
-                "`dS/dt = -βSI/N, dI/dt = βSI/N - γI, dR/dt = γI + stochastic noise`",
-                "`P(A|B) = [P(B|A) * P(A)] / P(B)`",
-                "`x_spillover = L * x_risk`",
-                "`λ ≈ (1/T) Σ ln |Δx(t+1)/Δx(t)|`",
-                "`H(X) = -Σ p(x)log(p(x))` & `D_KL(P||Q)`",
-                "Dilated convolutions for temporal patterns.",
-                "`max U(a) = max [Σ(Deficit_initial - Deficit_after_action(a))]`",
-                "`C(u_1, u_2) = Φ_Σ(Φ^(-1)(u_1), Φ^(-1)(u_2))`"
-            ],
-            "Why It Matters": [
-                "Captures clustering of trauma incidents (e.g., cascading accidents).",
-                "Models disease surges driven by population and environmental factors.",
-                "Enables adaptive reasoning under uncertainty for dynamic conditions.",
-                "Models risk propagation across spatially connected zones.",
-                "Identifies chaotic, unpredictable emergency patterns.",
-                "Quantifies unpredictability and deviations from historical norms.",
-                "Captures complex temporal patterns for accurate forecasting.",
-                "Optimizes resource allocation for maximum impact.",
-                "Models dependencies between trauma and disease events."
-            ],
-            "Predictive Quality Contribution (0-10)": [9, 8, 8, 7, 7, 9, 10 if TORCH_AVAILABLE else 7, 8, 8]
-        }
-        
-        st.dataframe(pd.DataFrame(methodology_data), use_container_width=True)
-
-    @staticmethod
-    def render_kpi_definitions():
-        """Displays an expandable section detailing each KPI."""
-        st.header("📊 II. Key Performance Indicators (KPIs) Explained")
-        with st.expander("View detailed KPI explanations"):
-            kpi_data = {
-                "KPI": [
-                    "**Incident Probability**", "**Expected Incident Volume**", "**Risk Entropy**", 
-                    "**Anomaly Score**", "**Spatial Spillover Risk**", "**Resource Adequacy Index**", 
-                    "**Chaos Sensitivity Score**", "**Bayesian Confidence Score**", "**Response Time Estimate**",
-                    "**Trauma Clustering Score**", "**Disease Surge Score**"
-                ],
-                "Description": [
-                    "Likelihood of at least one new incident in a zone within the next hour.",
-                    "Predicted number of incidents in a zone over a time horizon (e.g., 3 hours).",
-                    "Shannon Entropy of incident probability distribution across all zones.",
-                    "KL-Divergence between current and historical incident distributions.",
-                    "Risk score based on proximity to other high-risk zones.",
-                    "Ratio of expected incident volume to available units in/near a zone.",
-                    "Measure of system volatility using Lyapunov exponent in Anomaly-Entropy phase space.",
-                    "Model certainty in baseline incident rate predictions.",
-                    "Estimated time for emergency units to reach a zone.",
-                    "Intensity of trauma incident clustering based on Marked Hawkes Process.",
-                    "Likelihood of disease-related emergency surge based on SIR model."
-                ],
-                "Interpretation": [
-                    "High probability zones require immediate attention.",
-                    "High volume signals need for additional resources.",
-                    "High entropy indicates unpredictable, widespread incidents.",
-                    "High score flags unexpected incident patterns.",
-                    "High spillover risk predicts future surges in adjacent zones.",
-                    "Index > 1.0 indicates under-resourced zones.",
-                    "Spikes signal increasing system instability or chaos.",
-                    "Low confidence suggests cautious use of predictions.",
-                    "Longer times indicate potential response delays.",
-                    "High score indicates clustered trauma incidents, requiring rapid response.",
-                    "High score predicts potential disease-related surges, needing preventive measures."
-                ]
-            }
-            st.dataframe(pd.DataFrame(kpi_data), use_container_width=True)
-
-# --- L3: CORE DATA & SIMULATION MODULES ---
+# --- L1: CORE DATA & SIMULATION MODULES ---
 
 @st.cache_resource
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:
@@ -292,7 +168,7 @@ def get_default_config() -> Dict[str, Any]:
         },
         "tcnn_params": {
             "input_size": 7,
-            "output_size": 6,
+            "output_size": 16,  # Updated to handle 8 horizons (0.5, 1, 3, 6, 12, 24, 72, 144) for trauma and disease
             "channels": [16, 32, 64]
         }
     }
@@ -443,7 +319,7 @@ class DataManager:
         logger.info(f"Generated {len(incidents)} synthetic incidents.")
         return incidents
 
-# --- L4: SIMULATION & PREDICTIVE ENGINES ---
+# --- L2: SIMULATION & PREDICTIVE ENGINES ---
 
 class SimulationEngine:
     """Generates synthetic and processes real-time incident data."""
@@ -736,8 +612,8 @@ class PredictiveAnalyticsEngine:
             response_times[zone] = min_time if min_time != float('inf') else 10.0
         return response_times
 
-    def forecast_risk(self, kpi_df: pd.DataFrame, horizon_hours: int = 3) -> pd.DataFrame:
-        """Forecasts risk scores for trauma and disease incidents over a time horizon."""
+    def forecast_risk(self, kpi_df: pd.DataFrame, horizons: List[float] = [0.5, 1, 3, 6, 12, 24, 72, 144]) -> pd.DataFrame:
+        """Forecasts trauma and disease risks for multiple time horizons."""
         if self.tcnn_model and TORCH_AVAILABLE:
             try:
                 X = np.array([kpi_df[['Incident Probability', 'Risk Entropy', 'Anomaly Score', 'Trauma Clustering Score', 'Disease Surge Score']].values], dtype=np.float32)
@@ -746,34 +622,35 @@ class PredictiveAnalyticsEngine:
                     preds = self.tcnn_model(X).numpy()
                 forecast_data = []
                 for i, zone in enumerate(self.dm.zones):
-                    for h in range(horizon_hours):
-                        trauma_idx = i % (self.config['tcnn_params']['output_size'] // 2)
-                        disease_idx = trauma_idx + self.config['tcnn_params']['output_size'] // 2
+                    for h_idx, horizon in enumerate(horizons):
+                        trauma_idx = h_idx
+                        disease_idx = h_idx + len(horizons)
                         forecast_data.append({
                             'Zone': zone,
-                            'Hour': h + 1,
+                            'Horizon (Hours)': horizon,
                             'Trauma Risk': float(preds[0, trauma_idx]),
                             'Disease Risk': float(preds[0, disease_idx])
                         })
                 return pd.DataFrame(forecast_data)
             except Exception as e:
                 logger.warning(f"TCNN forecasting failed: {e}. Using baseline forecast.")
-        # Fallback to exponential smoothing
+        # Fallback to exponential smoothing with horizon-specific decay
         forecast_data = []
+        decay_rates = {0.5: 0.95, 1: 0.9, 3: 0.8, 6: 0.7, 12: 0.6, 24: 0.5, 72: 0.3, 144: 0.2}
         for zone in self.dm.zones:
             base_trauma = kpi_df.loc[kpi_df['Zone'] == zone, 'Trauma Clustering Score'].iloc[0] if not kpi_df.empty else 0.5
             base_disease = kpi_df.loc[kpi_df['Zone'] == zone, 'Disease Surge Score'].iloc[0] if not kpi_df.empty else 0.5
-            for h in range(horizon_hours):
-                decay = 0.9 ** (h + 1)
+            for horizon in horizons:
+                decay = decay_rates.get(horizon, 0.5)
                 forecast_data.append({
                     'Zone': zone,
-                    'Hour': h + 1,
+                    'Horizon (Hours)': horizon,
                     'Trauma Risk': base_trauma * decay,
                     'Disease Risk': base_disease * decay
                 })
         return pd.DataFrame(forecast_data)
 
-# --- L5: STRATEGIC ADVISOR ---
+# --- L3: STRATEGIC ADVISOR ---
 
 class StrategicAdvisor:
     """Optimizes resource allocation for emergency response."""
@@ -781,15 +658,30 @@ class StrategicAdvisor:
         self.dm = dm
         self.config = config
 
-    def recommend_allocations(self, kpi_df: pd.DataFrame) -> List[Dict]:
-        """Recommends ambulance reallocations based on risk and response times."""
-        if kpi_df.empty:
+    def recommend_allocations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> List[Dict]:
+        """Recommends ambulance reallocations based on risk and response times across horizons."""
+        if kpi_df.empty or forecast_df.empty:
             return []
         available_ambulances = [amb for amb in self.dm.ambulances.values() if amb['status'] == 'Disponible']
         if not available_ambulances:
             return []
 
-        deficits = kpi_df.set_index('Zone')[['Incident Probability', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score']].prod(axis=1)
+        # Combine current and forecasted risks (weighted by horizon proximity)
+        weights = {0.5: 0.3, 1: 0.25, 3: 0.2, 6: 0.15, 12: 0.1, 24: 0.08, 72: 0.07, 144: 0.05}
+        deficits = pd.Series(0.0, index=self.dm.zones)
+        for zone in self.dm.zones:
+            zone_kpi = kpi_df[kpi_df['Zone'] == zone]
+            zone_forecast = forecast_df[forecast_df['Zone'] == zone]
+            if not zone_kpi.empty:
+                current_deficit = zone_kpi[['Incident Probability', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score']].prod(axis=1).iloc[0]
+            else:
+                current_deficit = 0.0
+            forecast_deficit = 0.0
+            for _, row in zone_forecast.iterrows():
+                horizon = row['Horizon (Hours)']
+                forecast_deficit += weights.get(horizon, 0.1) * (row['Trauma Risk'] + row['Disease Risk'])
+            deficits[zone] = current_deficit + forecast_deficit
+
         target_zone = deficits.idxmax() if deficits.max() > 0.5 else None
         if not target_zone:
             return []
@@ -798,18 +690,18 @@ class StrategicAdvisor:
         for amb in available_ambulances:
             current_zone = next((z for z, d in self.dm.zones_gdf.iterrows() if d['geometry'].contains(amb['location'])), None)
             if current_zone != target_zone:
-                reason = (f"High combined risk (Trauma: {kpi_df.loc[kpi_df['Zone'] == target_zone, 'Trauma Clustering Score'].iloc[0]:.2f}, "
-                         f"Disease: {kpi_df.loc[kpi_df['Zone'] == target_zone, 'Disease Surge Score'].iloc[0]:.2f}, "
-                         f"Response Time: {kpi_df.loc[kpi_df['Zone'] == target_zone, 'Response Time Estimate'].iloc[0]:.1f} min) in {target_zone}")
+                reason = (f"High combined risk in {target_zone} (Current: {kpi_df.loc[kpi_df['Zone'] == target_zone, 'Incident Probability'].iloc[0] if not kpi_df.empty else 0:.2f}, "
+                         f"Trauma (3h): {forecast_df.loc[(forecast_df['Zone'] == target_zone) & (forecast_df['Horizon (Hours)'] == 3), 'Trauma Risk'].iloc[0] if not forecast_df.empty else 0:.2f}, "
+                         f"Disease (3h): {forecast_df.loc[(forecast_df['Zone'] == target_zone) & (forecast_df['Horizon (Hours)'] == 3), 'Disease Risk'].iloc[0] if not forecast_df.empty else 0:.2f})")
                 recommendations.append({
                     'unit': amb['id'],
                     'from': current_zone or 'Unknown',
                     'to': target_zone,
                     'reason': reason
                 })
-        return recommendations[:1]
+        return recommendations[:2]  # Limit to 2 recommendations for clarity
 
-# --- L6: REPORT GENERATION ---
+# --- L4: REPORT GENERATION ---
 
 class ReportGenerator:
     """Generates exportable PDF reports for actionable insights."""
@@ -847,7 +739,7 @@ class ReportGenerator:
             elements.append(Spacer(1, 12))
 
         if not forecast_df.empty:
-            elements.append(Paragraph("Risk Forecast (Next 3 Hours)", styles['Heading2']))
+            elements.append(Paragraph("Risk Forecast (Multiple Horizons)", styles['Heading2']))
             forecast_data = [forecast_df.columns.tolist()] + forecast_df.round(3).values.tolist()
             forecast_table = Table(forecast_data)
             forecast_table.setStyle([
@@ -862,7 +754,7 @@ class ReportGenerator:
         buffer.seek(0)
         return buffer
 
-# --- L7: UI & VISUALIZATION ---
+# --- L5: UI & VISUALIZATION ---
 
 class VisualizationSuite:
     """Generates operational and analytical visualizations."""
@@ -933,7 +825,7 @@ class VisualizationSuite:
 
     @staticmethod
     def plot_forecast_trend(forecast_df: pd.DataFrame) -> go.Figure:
-        """Plots forecasted trauma and disease risk trends over time."""
+        """Plots forecasted trauma and disease risk trends over multiple time horizons."""
         if forecast_df.empty:
             fig = go.Figure()
             fig.add_annotation(text="No forecast data available.", showarrow=False, font=dict(size=14))
@@ -943,30 +835,132 @@ class VisualizationSuite:
         for zone in forecast_df['Zone'].unique():
             zone_data = forecast_df[forecast_df['Zone'] == zone]
             fig.add_trace(go.Scatter(
-                x=zone_data['Hour'],
+                x=zone_data['Horizon (Hours)'],
                 y=zone_data['Trauma Risk'],
                 mode='lines+markers',
                 name=f"{zone} (Trauma)",
                 line=dict(dash='solid'),
-                hovertemplate='Hour: %{x}<br>Trauma Risk: %{y:.3f}'
+                hovertemplate='Horizon: %{x} hr<br>Trauma Risk: %{y:.3f}'
             ))
             fig.add_trace(go.Scatter(
-                x=zone_data['Hour'],
+                x=zone_data['Horizon (Hours)'],
                 y=zone_data['Disease Risk'],
                 mode='lines+markers',
                 name=f"{zone} (Disease)",
                 line=dict(dash='dash'),
-                hovertemplate='Hour: %{x}<br>Disease Risk: %{y:.3f}'
+                hovertemplate='Horizon: %{x} hr<br>Disease Risk: %{y:.3f}'
             ))
         fig.update_layout(
-            title="<b>Risk Forecast Trend (Next 3 Hours)</b>",
-            xaxis_title="Hour",
+            title="<b>Risk Forecast Trend (Multiple Horizons)</b>",
+            xaxis_title="Time Horizon (Hours)",
             yaxis_title="Forecasted Risk",
-            margin=dict(l=10, r=10, t=40, b=10)
+            margin=dict(l=10, r=10, t=40, b=10),
+            xaxis=dict(type='log', title="Time Horizon (Hours)", tickvals=[0.5, 1, 3, 6, 12, 24, 72, 144])
         )
         return fig
 
-# --- L8: MAIN APPLICATION LOGIC ---
+# --- L6: DOCUMENTATION & EXPLANATION MODULE ---
+
+class Documentation:
+    """Renders methodological framework and KPI explanations in the UI."""
+    
+    @staticmethod
+    def render_methodology_framework():
+        """Displays a table explaining the integrated mathematical frameworks."""
+        st.header("🧠 I. Integrated Methodological Framework")
+        st.markdown("""
+        The Phoenix Architecture integrates advanced computational methodologies to model the heuristic, stochastic,
+        and chaotic nature of medical emergencies, ensuring robust predictions for trauma and disease events.
+        """)
+        
+        methodology_data = {
+            "Methodology": [
+                "**Marked Hawkes Process**", "**Spatio-Temporal SIR Model**", "**Bayesian Inference**",
+                "**Graph Theory & Network Science**", "**Chaos Theory & Lyapunov Exponent**", "**Information Theory**",
+                "**Deep Learning & Probabilistic ML**", "**Game Theory**", "**Copula-Based Correlation**"
+            ],
+            "Description & Implementation": [
+                "Models trauma emergencies with a **Marked Hawkes Process** in `PredictiveAnalyticsEngine`, capturing spatial-temporal clustering of incidents.",
+                "Models disease emergencies with a **Spatio-Temporal SIR Model** in `PredictiveAnalyticsEngine`, accounting for population dynamics and stochastic transitions.",
+                "Employs a **Discrete Bayesian Network** (`pgmpy`) to infer incident rates from causal factors (weather, holidays, etc.).",
+                "Models the city as a spatial graph in `DataManager`. The **Graph Laplacian (L = D-A)** computes **Spatial Spillover Risk**.",
+                "Uses **Lyapunov Exponent** estimation to enhance the **Chaos Sensitivity Score**, detecting chaotic regimes in emergency dynamics.",
+                "Calculates **Shannon Entropy** and **Kullback-Leibler (KL) Divergence** for system unpredictability and anomaly detection.",
+                "Implements a **Temporal Convolutional Network (TCNN)** for multi-horizon forecasting, with fallback to statistical models if `torch` unavailable.",
+                "Uses a **one-shot game** in `StrategicAdvisor` to optimize resource allocation based on the **Resource Adequacy Index**.",
+                "Models correlations between trauma and disease emergencies using a **Gaussian Copula** in `PredictiveAnalyticsEngine`."
+            ],
+            "Mathematical Principle": [
+                "`λ(t, z) = μ(t, z) + Σ κ(z, z_i) e^(-β(t-t_i))`", 
+                "`dS/dt = -βSI/N, dI/dt = βSI/N - γI, dR/dt = γI + stochastic noise`",
+                "`P(A|B) = [P(B|A) * P(A)] / P(B)`",
+                "`x_spillover = L * x_risk`",
+                "`λ ≈ (1/T) Σ ln |Δx(t+1)/Δx(t)|`",
+                "`H(X) = -Σ p(x)log(p(x))` & `D_KL(P||Q)`",
+                "Dilated convolutions for temporal patterns.",
+                "`max U(a) = max [Σ(Deficit_initial - Deficit_after_action(a))]`",
+                "`C(u_1, u_2) = Φ_Σ(Φ^(-1)(u_1), Φ^(-1)(u_2))`"
+            ],
+            "Why It Matters": [
+                "Captures clustering of trauma incidents (e.g., cascading accidents).",
+                "Models disease surges driven by population and environmental factors.",
+                "Enables adaptive reasoning under uncertainty for dynamic conditions.",
+                "Models risk propagation across spatially connected zones.",
+                "Identifies chaotic, unpredictable emergency patterns.",
+                "Quantifies unpredictability and deviations from historical norms.",
+                "Captures complex temporal patterns for accurate forecasting across multiple horizons.",
+                "Optimizes resource allocation for maximum impact.",
+                "Models dependencies between trauma and disease events."
+            ],
+            "Predictive Quality Contribution (0-10)": [9, 8, 8, 7, 7, 9, 10 if TORCH_AVAILABLE else 7, 8, 8]
+        }
+        
+        st.dataframe(pd.DataFrame(methodology_data), use_container_width=True)
+
+    @staticmethod
+    def render_kpi_definitions():
+        """Displays an expandable section detailing each KPI."""
+        st.header("📊 II. Key Performance Indicators (KPIs) Explained")
+        with st.expander("View detailed KPI explanations"):
+            kpi_data = {
+                "KPI": [
+                    "**Incident Probability**", "**Expected Incident Volume**", "**Risk Entropy**", 
+                    "**Anomaly Score**", "**Spatial Spillover Risk**", "**Resource Adequacy Index**", 
+                    "**Chaos Sensitivity Score**", "**Bayesian Confidence Score**", "**Response Time Estimate**",
+                    "**Trauma Clustering Score**", "**Disease Surge Score**", "**Trauma-Disease Correlation**"
+                ],
+                "Description": [
+                    "Likelihood of at least one new incident in a zone within the next hour.",
+                    "Predicted number of incidents in a zone over a time horizon (e.g., 3 hours).",
+                    "Shannon Entropy of incident probability distribution across all zones.",
+                    "KL-Divergence between current and historical incident distributions.",
+                    "Risk score based on proximity to other high-risk zones.",
+                    "Ratio of expected incident volume to available units in/near a zone.",
+                    "Measure of system volatility using Lyapunov exponent in Anomaly-Entropy phase space.",
+                    "Model certainty in baseline incident rate predictions.",
+                    "Estimated time for emergency units to reach a zone.",
+                    "Intensity of trauma incident clustering based on Marked Hawkes Process.",
+                    "Likelihood of disease-related emergency surge based on SIR model.",
+                    "Correlation between trauma and disease incidents using a Gaussian Copula."
+                ],
+                "Interpretation": [
+                    "High probability zones require immediate attention.",
+                    "High volume signals need for additional resources.",
+                    "High entropy indicates unpredictable, widespread incidents.",
+                    "High score flags unexpected incident patterns.",
+                    "High spillover risk predicts future surges in adjacent zones.",
+                    "Index > 1.0 indicates under-resourced zones.",
+                    "Spikes signal increasing system instability or chaos.",
+                    "Low confidence suggests cautious use of predictions.",
+                    "Longer times indicate potential response delays.",
+                    "High score indicates clustered trauma incidents, requiring rapid response.",
+                    "High score predicts potential disease-related surges, needing preventive measures.",
+                    "High correlation indicates coupled trauma-disease dynamics."
+                ]
+            }
+            st.dataframe(pd.DataFrame(kpi_data), use_container_width=True)
+
+# --- L7: MAIN APPLICATION LOGIC ---
 
 @st.cache_resource
 def initialize_system(config: Dict[str, Any]) -> Tuple[DataManager, PredictiveAnalyticsEngine, SimulationEngine, StrategicAdvisor]:
@@ -980,32 +974,8 @@ def initialize_system(config: Dict[str, Any]) -> Tuple[DataManager, PredictiveAn
 def main():
     """Main application entry point."""
     try:
-        st.title("RedShield AI: Phoenix Architecture v2.3")
-        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.3")
-
-        # Authentication
-        auth_manager = AuthManager()
-        if 'user' not in st.session_state:
-            st.session_state.user = None
-
-        if not st.session_state.user:
-            st.sidebar.header("Login")
-            username = st.sidebar.text_input("Username", key="username_input")
-            password = st.sidebar.text_input("Password", type="password", key="password_input")
-            if st.sidebar.button("Login"):
-                user = auth_manager.authenticate(username, password)
-                if user:
-                    st.session_state.user = user
-                    st.rerun()
-                else:
-                    st.sidebar.error("Invalid credentials.")
-            return
-
-        user = st.session_state.user
-        st.sidebar.write(f"Logged in as: {user['username']} ({user['role']})")
-        if st.sidebar.button("Logout"):
-            st.session_state.user = None
-            st.rerun()
+        st.title("RedShield AI: Phoenix Architecture v2.4")
+        st.markdown("**Commercial-Grade Predictive Intelligence for Urban Emergency Response** | Version 2.4")
 
         config = load_config()
         dm, predictor, sim_engine, advisor = initialize_system(config)
@@ -1039,20 +1009,20 @@ def main():
             with st.spinner("Running predictive cycle..."):
                 current_incidents = sim_engine.get_live_state(env_factors, len(st.session_state.history))['incidents']
                 st.session_state.history.append({'incidents': current_incidents, 'timestamp': datetime.utcnow().isoformat()})
-                st.session_state.history = [h for h in st.session_state.history if datetime.fromisoformat(h['timestamp']) > datetime.utcnow() - timedelta(hours=24)]
+                st.session_state.history = [h for h in st.session_state.history if datetime.fromisoformat(h['timestamp']) > datetime.utcnow() - timedelta(hours=144)]
                 kpi_df = predictor.generate_kpis(pd.DataFrame(st.session_state.history), env_factors, current_incidents)
-                recommendations = advisor.recommend_allocations(kpi_df) if auth_manager.has_permission(user, "admin") else []
                 forecast_df = predictor.forecast_risk(kpi_df)
+                recommendations = advisor.recommend_allocations(kpi_df, forecast_df)
 
             with tab1:
                 st.header("Real-Time System Insights")
                 st.plotly_chart(VisualizationSuite.plot_kpi_dashboard(kpi_df), use_container_width=True)
-                if recommendations and auth_manager.has_permission(user, "admin"):
+                if recommendations:
                     st.subheader("Resource Allocation Recommendations")
                     for rec in recommendations:
                         st.warning(f"**Move {rec['unit']}** from {rec['from']} to {rec['to']}. Reason: {rec['reason']}")
-                elif not auth_manager.has_permission(user, "admin"):
-                    st.info("Resource allocation recommendations are available to admin users only.")
+                else:
+                    st.info("No immediate resource reallocation needed.")
 
             with tab2:
                 st.header("Live Risk & Incident Map")
@@ -1060,7 +1030,7 @@ def main():
                 st_folium(VisualizationSuite.plot_risk_heatmap(kpi_df, dm, config, risk_type), width=700, height=500)
 
             with tab3:
-                st.header("Risk Forecast (Next 3 Hours)")
+                st.header("Risk Forecast (Multiple Horizons)")
                 st.plotly_chart(VisualizationSuite.plot_forecast_trend(forecast_df), use_container_width=True)
 
             if not kpi_df.empty:
