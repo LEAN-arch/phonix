@@ -12,3 +12,5 @@ torch==2.0.1
 pgmpy==0.1.22 
 streamlit-folium==0.20.0 
 folium==0.15.1
+
+
