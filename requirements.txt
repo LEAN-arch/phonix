@@ -1,1 +1,1 @@
-streamlit==1.31.0 pandas==2.0.3 numpy==1.24.3 geopandas==0.14.4 shapely==2.0.1 networkx==3.1 plotly==5.15.0 requests==2.31.0 reportlab==4.0.4 scipy==1.10.1 torch==2.0.1 ; python_version >= "3.8" pgmpy==0.1.22
+streamlit==1.31.0 pandas==2.0.3 numpy==1.24.3 geopandas==0.14.4 shapely==2.0.1 networkx==3.1 plotly==5.15.0 requests==2.31.0 reportlab==4.0.4 scipy==1.10.1 torch==2.0.1 ; python_version >= "3.8" pgmpy==0.1.22 streamlit-folium==0.20.0 folium==0.15.1
