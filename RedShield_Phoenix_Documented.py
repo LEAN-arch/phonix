@@ -15,6 +15,7 @@
 # 6. [FORECASTING] Enhanced risk forecasting to differentiate trauma and disease dynamics.
 # 7. [VISUALIZATION] Replaced Mapbox with OpenStreetMap and Leaflet.js (via streamlit-folium).
 # 8. [DATA] Replaced real-time API with local sample_api_response.json for incident data.
+# 9. [FIX] Added unique keys to st.text_input widgets to resolve DuplicateWidgetID error.
 #
 # PREVIOUS FEATURES (v2.2):
 # - Real-time data integration, resource optimization, authentication, PDF reports, and robust error handling.
@@ -989,8 +990,8 @@ def main():
 
         if not st.session_state.user:
             st.sidebar.header("Login")
-            username = st.sidebar.text_input("Username")
-            password = st.sidebar.text_input("Password", type="password")
+            username = st.sidebar.text_input("Username", key="username_input")
+            password = st.sidebar.text_input("Password", type="password", key="password_input")
             if st.sidebar.button("Login"):
                 user = auth_manager.authenticate(username, password)
                 if user:
@@ -1085,9 +1086,6 @@ def main():
     except Exception as e:
         logger.error(f"Critical error in main: {e}", exc_info=True)
         st.error(f"A fatal system error occurred: {e}. Check logs for details.")
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
