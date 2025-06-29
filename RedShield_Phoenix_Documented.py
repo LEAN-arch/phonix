@@ -95,7 +95,7 @@ def load_config(config_path: str = "config.json") -> Dict[str, any]:
         return config
     except (json.JSONDecodeError, ValueError) as e:
         logger.error(f"Failed to load or validate config: {e}. Falling back to default configuration.", exc_info=True)
-        st.error(f"Configuration error: {e}. Using default configuration.")
+        st.warning(f"Configuration error: {e}. Using default configuration.")
         return get_default_config()
 
 def get_default_config() -> Dict[str, any]:
@@ -227,8 +227,12 @@ def validate_config(config: Dict[str, any]) -> None:
             raise ValueError(f"Invalid polygon for zone '{zone}'.")
         if 'population' not in data or not isinstance(data['population'], (int, float)) or data['population'] <= 0:
             raise ValueError(f"Invalid population for zone '{zone}'.")
-        if 'crime_rate_modifier' not in data or not isinstance(data['crime_rate_modifier'], (int, float)) or data['crime_rate_modifier'] <= 0:
-            raise ValueError(f"Invalid crime_rate_modifier for zone '{zone}'.")
+        if 'crime_rate_modifier' not in data or not isinstance(data['crime_rate_modifier'], (int, float)):
+            logger.warning(f"Invalid or missing crime_rate_modifier for zone '{zone}'. Setting to default (1.0).")
+            data['crime_rate_modifier'] = 1.0
+        elif data['crime_rate_modifier'] <= 0:
+            logger.warning(f"Non-positive crime_rate_modifier ({data['crime_rate_modifier']}) for zone '{zone}'. Setting to default (1.0).")
+            data['crime_rate_modifier'] = 1.0
             
     for amb_id, amb_data in config.get('data', {}).get('ambulances', {}).items():
         if 'location' not in amb_data or not isinstance(amb_data['location'], list) or len(amb_data['location']) != 2:
@@ -326,7 +330,7 @@ class DataManager:
                 continue
             loc = inc['location']
             if not isinstance(loc, dict) or 'lat' not in loc or 'lon' not in loc:
-                logger.warning(f"Skipping incident {inc['id']}: Invalid location format.")
+                logger.warning(f"Skipping incident {inc.get('id')}: Invalid location format.")
                 continue
             try:
                 lat, lon = float(loc['lat']), float(loc['lon'])
@@ -597,10 +601,19 @@ class PredictiveAnalyticsEngine:
         trauma_intensity = violence_intensity + accident_intensity
         disease_intensity = medical_intensity
         
-        current_dist = (incident_counts / (incident_counts.sum() + 1e-9)).reindex(self.dm.zones, fill_value=0)
-        prior_dist = self.config['data']['distributions']['zone']
-        kl_divergence = np.sum(current_dist * np.log(current_dist.replace(0, 1e-9) / pd.Series(prior_dist).reindex_like(current_dist).replace(0, 1e-9)))
-        shannon_entropy = -np.sum(current_dist * np.log2(current_dist.replace(0, 1e-9)))
+        # Suppress NumPy warnings for division and invalid operations
+        with np.errstate(divide='ignore', invalid='ignore'):
+            current_dist = (incident_counts / (incident_counts.sum() + 1e-9)).reindex(self.dm.zones, fill_value=0)
+            if current_dist.sum() == 0 or not np.isfinite(current_dist).all():
+                kl_divergence = 0.0
+                shannon_entropy = 0.0
+            else:
+                prior_dist = self.config['data']['distributions']['zone']
+                kl_divergence = np.sum(current_dist * np.log(current_dist.replace(0, 1e-9) / pd.Series(prior_dist).reindex_like(current_dist).replace(0, 1e-9)))
+                shannon_entropy = -np.sum(current_dist * np.log2(current_dist.replace(0, 1e-9)))
+                if not np.isfinite(kl_divergence): kl_divergence = 0.0
+                if not np.isfinite(shannon_entropy): shannon_entropy = 0.0
+
         lyapunov_exponent = self._calculate_lyapunov_exponent(historical_data, current_dist)
         
         base_probs = self._calculate_base_probabilities(baseline_rate, trauma_intensity + disease_intensity, prior_dist)
@@ -691,7 +704,7 @@ class PredictiveAnalyticsEngine:
             y = np.array([series[i:i + (m - 1) * tau + 1:tau] for i in range(N)])
             distances = [np.linalg.norm(y - y[i], axis=1) for i in range(N)]
             divergence = [np.log(d[i+1] / (d[i] + 1e-9)) for i, d in enumerate(distances[:-1]) if d[i] > 0]
-            return np.mean(divergence) if divergence else 0.0
+            return np.mean(divergence) if divergence and np.isfinite(divergence).all() else 0.0
         except Exception: return 0.0
 
     def _calculate_trauma_cluster_scores(self, trauma_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
@@ -727,10 +740,12 @@ class PredictiveAnalyticsEngine:
     def _model_event_correlations(self, trauma_dist: pd.Series, disease_dist: pd.Series) -> float:
         try:
             trauma_dist, disease_dist = trauma_dist.reindex(self.dm.zones, fill_value=0.0), disease_dist.reindex(self.dm.zones, fill_value=0.0)
+            if trauma_dist.sum() == 0 or disease_dist.sum() == 0 or trauma_dist.std() == 0 or disease_dist.std() == 0:
+                return 0.0
             u1, u2 = norm.cdf(trauma_dist.values), norm.cdf(disease_dist.values)
             rho = self.config['model_params'].get('copula_correlation', 0.2)
             if not np.all(np.isfinite(u1)) or not np.all(np.isfinite(u2)): return 0.0
-            return np.corrcoef(u1, u2)[0, 1] if len(u1) > 1 and np.std(u1) > 0 and np.std(u2) > 0 else 0.0
+            return np.corrcoef(u1, u2)[0, 1] if len(u1) > 1 else 0.0
         except Exception: return 0.0
 
     def _calculate_response_times(self, incidents: List[Dict]) -> Dict[str, float]:
@@ -891,7 +906,7 @@ class ReportGenerator:
             elements.append(Paragraph("Risk Forecast (Multiple Horizons)", styles['Heading2']))
             forecast_data = [forecast_df.columns.tolist()] + forecast_df.round(3).values.tolist()
             forecast_table = Table(forecast_data)
-            forecast_table.setStyle([
+            glimpse_table.setStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
                 ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
                 ('GRID', (0, 0), (-1, -1), 1, '#000000'),
@@ -1147,7 +1162,12 @@ class VisualizationSuite:
         return fig
 
 def main():
-    config = load_config()
+    try:
+        config = load_config()
+    except Exception as e:
+        st.error(f"Failed to load configuration: {e}. Using default configuration.")
+        config = get_default_config()
+
     dm = get_data_manager(config)
     analytics = PredictiveAnalyticsEngine(dm, config)
     advisor = StrategicAdvisor(dm, config)
@@ -1242,32 +1262,4 @@ def main():
     st.subheader("Risk Heatmap")
     heatmap = viz.plot_risk_heatmap(kpi_df, dm, config, 'Ensemble Risk Score')
     if heatmap:
-        st_folium(heatmap, width=700, height=500)
-
-    st.header("Resource Allocation Recommendations")
-    if recommendations:
-        for rec in recommendations:
-            st.write(f"**Move {rec['unit']}** from {rec['from']} to {rec['to']}. **Reason**: {rec['reason']}")
-    else:
-        st.write("No reallocation recommendations at this time.")
-
-    st.header("Generate Report")
-    if st.button("Generate PDF Report"):
-        pdf_buffer = report_gen.generate_pdf_report(kpi_df, recommendations, forecast_df)
-        st.download_button(
-            label="Download PDF Report",
-            data=pdf_buffer,
-            file_name=f"redshield_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-            mime="application/pdf"
-        )
-
-    if current_incidents:
-        st.session_state.historical_data.append({
-            'timestamp': datetime.utcnow().isoformat(),
-            'incidents': current_incidents
-        })
-        st.session_state.historical_data = st.session_state.historical_data[-10:]
-        st.session_state.run_count += 1
-
-if __name__ == "__main__":
-    main()
+        st_folium(heatmap, width=700, height=500
