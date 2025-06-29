@@ -204,7 +204,8 @@ class PredictiveAnalyticsEngine:
 
     @st.cache_data
     def generate_kpis(_self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
-        kpi_cols = ['Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 'Ensemble Risk Score']
+        # --- ADDITION: Include new 'Information Value Index' in the KPI list ---
+        kpi_cols = ['Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Information Value Index', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 'Ensemble Risk Score']
         kpi_df = pd.DataFrame(0, index=_self.dm.zones, columns=kpi_cols, dtype=float)
 
         all_incidents = [inc for h in historical_data for inc in h.get('incidents', [])] + current_incidents
@@ -264,11 +265,23 @@ class PredictiveAnalyticsEngine:
         kpi_df['Disease Surge Score'] = kpi_df['Medical Surge Score']
         
         kpi_df['Incident Probability'] = base_probs
-        kpi_df['Expected Incident Volume'] = incident_counts
+        # --- ENHANCEMENT: Improved Expected Incident Volume calculation ---
+        # The expected number of incidents is the rate (base_probs) multiplied by an intensity factor (e.g., 10 for a time window)
+        kpi_df['Expected Incident Volume'] = (base_probs * 10).round()
+        
         available_units = sum(1 for a in _self.dm.ambulances.values() if a['status'] == 'Disponible')
-        kpi_df['Resource Adequacy Index'] = (available_units / (incident_counts.sum() + 1e-9)).clip(0, 1)
+        needed_units = kpi_df['Expected Incident Volume'].sum()
+        kpi_df['Resource Adequacy Index'] = (available_units / (needed_units + 1e-9)).clip(0, 1)
+
         kpi_df['Response Time Estimate'] = 10.0 * (1 + _self.model_params['response_time_penalty'] * (1-kpi_df['Resource Adequacy Index']))
+        
         kpi_df['Ensemble Risk Score'] = _self.calculate_ensemble_risk_score(kpi_df, historical_data)
+
+        # --- ADDITION: Calculate Information Value Index ---
+        # A simple proxy is the standard deviation of the risk scores. High std means clear hotspots (high info value).
+        # Low std means risk is evenly spread (low info value for differentiation).
+        info_value = kpi_df['Ensemble Risk Score'].std()
+        kpi_df['Information Value Index'] = info_value
 
         return kpi_df.fillna(0).reset_index().rename(columns={'index': 'Zone'})
         
@@ -280,8 +293,6 @@ class PredictiveAnalyticsEngine:
             return np.log(series.diff().abs().mean() + 1)
         except Exception: return 0.0
 
-    # --- BUG FIX STARTS HERE ---
-    # Refactored this function to be more robust and avoid in-place addition errors.
     def calculate_ensemble_risk_score(_self, kpi_df: pd.DataFrame, historical_data: List[Dict]) -> pd.Series:
         if kpi_df.empty or not _self.method_weights:
             return pd.Series(0.0, index=kpi_df.index)
@@ -309,22 +320,16 @@ class PredictiveAnalyticsEngine:
             tcnn_risk = _self.forecast_df[_self.forecast_df['Horizon (Hours)'] == 3].set_index('Zone')[['Violence Risk', 'Accident Risk', 'Medical Risk']].mean(axis=1)
             normalized_scores_df['tcnn'] = normalize(tcnn_risk.reindex(_self.dm.zones, fill_value=0))
 
-        # Calculate weighted average
         weights = pd.Series(_self.method_weights)
-        # Align columns of scores and weights for dot product
         aligned_scores, aligned_weights = normalized_scores_df.align(weights, axis=1, fill_value=0)
-        
         final_scores = aligned_scores.dot(aligned_weights)
         
         return final_scores.clip(0, 1)
-    # --- BUG FIX ENDS HERE ---
 
     def generate_forecast(self, historical_data: List[Dict], env_factors: EnvFactors, kpi_df: pd.DataFrame) -> pd.DataFrame:
         if kpi_df.empty: return pd.DataFrame()
-
         forecast_data = []
         decay_rates = self.model_params['fallback_forecast_decay_rates']
-        
         for _, row in kpi_df.iterrows():
             for horizon in self.config['forecast_horizons_hours']:
                 decay = decay_rates.get(str(horizon), 0.5)
