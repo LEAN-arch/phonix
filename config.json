@@ -1,167 +1,80 @@
 {
-    "mapbox_api_key": null,
-    "forecast_horizons_hours": [
-        0.5,
-        1,
-        3,
-        6,
-        12,
-        24,
-        72,
-        144
-    ],
-    "data": {
-        "zones": {
-            "Centro": {
-                "polygon": [
-                    [32.52, -117.03],
-                    [32.54, -117.03],
-                    [32.54, -117.05],
-                    [32.52, -117.05]
-                ],
-                "prior_risk": 0.7,
-                "population": 50000
-            },
-            "Otay": {
-                "polygon": [
-                    [32.53, -116.95],
-                    [32.54, -116.95],
-                    [32.54, -116.98],
-                    [32.53, -116.98]
-                ],
-                "prior_risk": 0.4,
-                "population": 30000
-            },
-            "Playas": {
-                "polygon": [
-                    [32.51, -117.11],
-                    [32.53, -117.11],
-                    [32.53, -117.13],
-                    [32.51, -117.13]
-                ],
-                "prior_risk": 0.3,
-                "population": 20000
-            }
-        },
-        "ambulances": {
-            "A01": {
-                "status": "Disponible",
-                "home_base": "Centro",
-                "location": [32.53, -117.04]
-            },
-            "A02": {
-                "status": "Disponible",
-                "home_base": "Otay",
-                "location": [32.535, -116.965]
-            },
-            "A03": {
-                "status": "En Misi\u00f3n",
-                "home_base": "Playas",
-                "location": [32.52, -117.12]
-            }
-        },
-        "distributions": {
-            "zone": {
-                "Centro": 0.5,
-                "Otay": 0.3,
-                "Playas": 0.2
-            },
-            "incident_type": {
-                "Trauma": 0.4,
-                "Medical": 0.6
-            },
-            "triage": {
-                "Red": 0.1,
-                "Yellow": 0.3,
-                "Green": 0.6
-            }
-        },
-        "road_network": {
-            "edges": [
-                ["Centro", "Otay", 5],
-                ["Otay", "Playas", 8],
-                ["Playas", "Centro", 10]
-            ]
-        },
-        "real_time_api": {
-            "endpoint": "sample_api_response.json",
-            "api_key": null
-        }
+  "mapbox_api_key": null,
+  "forecast_horizons_hours": [0.5, 1, 3, 6, 12, 24, 72, 144],
+  "data": {
+    "zones": {
+      "Centro": {
+        "polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]],
+        "prior_risk": 0.7,
+        "population": 50000,
+        "crime_rate_modifier": 1.2
+      },
+      "Otay": {
+        "polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]],
+        "prior_risk": 0.4,
+        "population": 30000,
+        "crime_rate_modifier": 0.8
+      },
+      "Playas": {
+        "polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]],
+        "prior_risk": 0.3,
+        "population": 20000,
+        "crime_rate_modifier": 1.0
+      }
     },
-    "model_params": {
-        "hawkes_process": {
-            "kappa": 0.5,
-            "beta": 1.0,
-            "trauma_weight": 1.5
-        },
-        "sir_model": {
-            "beta": 0.3,
-            "gamma": 0.1,
-            "noise_scale": 0.05
-        },
-        "laplacian_diffusion_factor": 0.1,
-        "response_time_penalty": 3.0,
-        "copula_correlation": 0.2,
-        "ensemble_weights": {
-            "hawkes": 9,
-            "sir": 8,
-            "bayesian": 8,
-            "graph": 7,
-            "chaos": 7,
-            "info": 9,
-            "tcnn": 10,
-            "game": 8,
-            "copula": 8
-        },
-        "chaos_amplifier": 1.5,
-        "fallback_forecast_decay_rates": {
-            "0.5": 0.95,
-            "1": 0.9,
-            "3": 0.8,
-            "6": 0.7,
-            "12": 0.6,
-            "24": 0.5,
-            "72": 0.3,
-            "144": 0.2
-        },
-        "allocation_forecast_weights": {
-            "0.5": 0.3,
-            "1": 0.25,
-            "3": 0.2,
-            "6": 0.15,
-            "12": 0.1,
-            "24": 0.08,
-            "72": 0.07,
-            "144": 0.05
-        }
+    "ambulances": {
+      "A01": {
+        "status": "Disponible",
+        "home_base": "Centro",
+        "location": [32.53, -117.04]
+      },
+      "A02": {
+        "status": "Disponible",
+        "home_base": "Otay",
+        "location": [32.535, -116.965]
+      },
+      "A03": {
+        "status": "En Misión",
+        "home_base": "Playas",
+        "location": [32.52, -117.12]
+      }
     },
-    "bayesian_network": {
-        "structure": [
-            ["Holiday", "IncidentRate"],
-            ["Weather", "IncidentRate"],
-            ["MajorEvent", "IncidentRate"]
-        ],
-        "cpds": {
-            "Holiday": { "card": 2, "values": [[0.9], [0.1]], "evidence": null, "evidence_card": null },
-            "Weather": { "card": 2, "values": [[0.7], [0.3]], "evidence": null, "evidence_card": null },
-            "MajorEvent": { "card": 2, "values": [[0.8], [0.2]], "evidence": null, "evidence_card": null },
-            "IncidentRate": {
-                "card": 3,
-                "values": [
-                    [0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2],
-                    [0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5],
-                    [0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3]
-                ],
-                "evidence": ["Holiday", "Weather", "MajorEvent"],
-                "evidence_card": [2, 2, 2]
-            }
-        }
+    "distributions": {
+      "zone": {
+        "Centro": 0.5,
+        "Otay": 0.3,
+        "Playas": 0.2
+      },
+      "incident_type": {
+        "Trauma-Violence": 0.2,
+        "Trauma-Accident": 0.2,
+        "Medical-Chronic": 0.4,
+        "Medical-Acute": 0.2
+      },
+      "triage": {
+        "Red": 0.1,
+        "Yellow": 0.3,
+        "Green": 0.6
+      }
     },
-    "tcnn_params": {
-        "input_size": 5,
-        "output_size": 16,
-        "channels": [16, 32, 64],
-        "kernel_size": 2,
-        "dropout": 0.2
+    "road_network": {
+      "edges": [
+        ["Centro", "Otay", 5],
+        ["Otay", "Playas", 8],
+        ["Playas", "Centro", 10]
+      ]
+    },
+    "real_time_api": {
+      "endpoint": "sample_api_response.json",
+      "api_key": null
     }
-}
+  },
+  "model_params": {
+    "hawkes_process": {
+      "kappa": 0.5,
+      "beta": 1.0,
+      "trauma_weight": 1.5,
+      "violence_weight": 1.8,
+      "aqi_multiplier": 1.5
+    },
+    "sir_model": {
