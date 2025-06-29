@@ -153,7 +153,6 @@ def get_default_config() -> Dict[str, any]:
                     "polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]],
                     "prior_risk": 0.7,
                     "population": 50000,
-br
                     "crime_rate_modifier": 1.2
                 },
                 "Otay": {
@@ -829,422 +828,387 @@ class PredictiveAnalyticsEngine:
             divergence = [np.log(d[i+1] / (d[i] + 1e-9)) for i, d in enumerate(distances[:-1]) if d[i] > 0 and i + 1 < len(d)]
             return np.mean(divergence) if divergence and np.isfinite(divergence).all() else 0.0
         except Exception as e:
-            logger.warning(f"Lyapunov exponent calculation failed: {e}. Returning 0.0.", exc_info=True)
+            logger.warning(f"Failed to calculate Lyapunov exponent: {e}. Using default 0.0.", exc_info=True)
             return 0.0
 
+    def _calculate_response_times(self, current_incidents: List[Dict]) -> Dict[str, float]:
+        response_times = {zone: 10.0 for zone in self.dm.zones}
+        penalty = self.config['model_params'].get('response_time_penalty', 3.0)
+        
+        for zone in self.dm.zones:
+            available_ambulances = [
+                amb for amb in self.dm.ambulances.values()
+                if amb['status'] == 'Disponible' and self.dm.zones_gdf.loc[zone, 'geometry'].contains(amb['location'])
+            ]
+            if not available_ambulances:
+                response_times[zone] *= penalty
+            zone_incidents = [inc for inc in current_incidents if isinstance(inc, dict) and self.dm.zones_gdf.loc[zone, 'geometry'].contains(inc.get('location', Point(0, 0)))]
+            if zone_incidents:
+                response_times[zone] *= (1 + 0.5 * len(zone_incidents))
+        return response_times
+
     def _calculate_trauma_cluster_scores(self, trauma_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        return {
-            zone: trauma_counts.get(zone, 0) * params.get('kappa', 0.5) * params.get('trauma_weight', 1.5) * self.dm.zones_gdf.loc[zone, 'crime_rate_modifier']
-            for zone in self.dm.zones
-        }
+        scores = {}
+        for zone in self.dm.zones:
+            count = trauma_counts.get(zone, 0)
+            score = count * params.get('kappa', 0.5) * params.get('trauma_weight', 1.5)
+            scores[zone] = min(max(score, 0.0), 1.0)
+        return scores
 
     def _calculate_disease_surge_scores(self, disease_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        return {
-            zone: disease_counts.get(zone, 0) * params.get('beta', 0.3) * self.dm.zones_gdf.loc[zone, 'population'] / POPULATION_DENSITY_NORMALIZATION
-            for zone in self.dm.zones
-        }
+        scores = {}
+        for zone in self.dm.zones:
+            count = disease_counts.get(zone, 0)
+            S = self.dm.zones_gdf.loc[zone, 'population']
+            I = count / (S + 1e-9)
+            score = params.get('beta', 0.3) * S * I / (S + 1e-9) - params.get('gamma', 0.1) * I
+            scores[zone] = min(max(score + np.random.normal(0, params.get('noise_scale', 0.05)), 0.0), 1.0)
+        return scores
 
     def _calculate_violence_cluster_scores(self, violence_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        return {
-            zone: violence_counts.get(zone, 0) * params.get('kappa', 0.5) * params.get('violence_weight', 1.8) * self.dm.zones_gdf.loc[zone, 'crime_rate_modifier']
-            for zone in self.dm.zones
-        }
+        scores = {}
+        for zone in self.dm.zones:
+            count = violence_counts.get(zone, 0)
+            score = count * params.get('kappa', 0.5) * params.get('violence_weight', 1.8)
+            scores[zone] = min(max(score, 0.0), 1.0)
+        return scores
 
     def _calculate_accident_cluster_scores(self, accident_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        return {
-            zone: accident_counts.get(zone, 0) * params.get('kappa', 0.5) * params.get('trauma_weight', 1.5) * self.dm.zones_gdf.loc[zone, 'crime_rate_modifier']
-            for zone in self.dm.zones
-        }
+        scores = {}
+        for zone in self.dm.zones:
+            count = accident_counts.get(zone, 0)
+            score = count * params.get('kappa', 0.5) * params.get('trauma_weight', 1.5)
+            scores[zone] = min(max(score, 0.0), 1.0)
+        return scores
 
     def _calculate_medical_surge_scores(self, medical_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        return {
-            zone: medical_counts.get(zone, 0) * params.get('beta', 0.3) * self.dm.zones_gdf.loc[zone, 'population'] / POPULATION_DENSITY_NORMALIZATION
-            for zone in self.dm.zones
-        }
+        scores = {}
+        for zone in self.dm.zones:
+            count = medical_counts.get(zone, 0)
+            S = self.dm.zones_gdf.loc[zone, 'population']
+            I = count / (S + 1e-9)
+            score = params.get('beta', 0.3) * S * I / (S + 1e-9) - params.get('gamma', 0.1) * I
+            scores[zone] = min(max(score + np.random.normal(0, params.get('noise_scale', 0.05)), 0.0), 1.0)
+        return scores
 
     def _model_event_correlations(self, trauma_dist: pd.Series, disease_dist: pd.Series) -> float:
         try:
-            trauma_dist = trauma_dist.reindex(self.dm.zones, fill_value=0.0)
-            disease_dist = disease_dist.reindex(self.dm.zones, fill_value=0.0)
-            if trauma_dist.sum() == 0 or disease_dist.sum() == 0 or trauma_dist.std() == 0 or disease_dist.std() == 0:
-                return 0.0
-            u1, u2 = norm.cdf(trauma_dist.values), norm.cdf(disease_dist.values)
-            if not np.all(np.isfinite(u1)) or not np.all(np.isfinite(u2)):
-                return 0.0
-            return np.corrcoef(u1, u2)[0, 1] if len(u1) > 1 else 0.0
+            rho = self.config['model_params'].get('copula_correlation', 0.2)
+            trauma_dist = trauma_dist.reindex(self.dm.zones, fill_value=0)
+            disease_dist = disease_dist.reindex(self.dm.zones, fill_value=0)
+            u = norm.cdf(trauma_dist)
+            v = norm.cdf(disease_dist)
+            return np.mean(np.tanh(rho * (u - 0.5) * (v - 0.5)))
         except Exception as e:
-            logger.warning(f"Event correlation calculation failed: {e}. Returning 0.0.", exc_info=True)
+            logger.warning(f"Failed to calculate event correlations: {e}. Using default 0.0.", exc_info=True)
             return 0.0
 
-    def _calculate_response_times(self, incidents: List[Dict]) -> Dict[str, float]:
-        available_ambulances = [amb for amb in self.dm.ambulances.values() if amb['status'] == 'Disponible']
-        response_times = {}
-        for zone in self.dm.zones:
-            if not available_ambulances:
-                response_times[zone] = 10.0
-                continue
-            zone_centroid = self.dm.zones_gdf.loc[zone, 'geometry'].centroid
-            distances = [
-                zone_centroid.distance(amb['location']) * 1000 / 50000 * 60 + self.config['model_params']['response_time_penalty']
-                for amb in available_ambulances if isinstance(amb['location'], Point)
-            ]
-            response_times[zone] = min(distances) if distances else 10.0
-        return response_times
-
-    def forecast_risk(self, kpi_df: pd.DataFrame) -> pd.DataFrame:
-        horizons = self.config.get('forecast_horizons_hours', DEFAULT_HORIZONS)
+    def generate_forecast(self, historical_data: List[Dict], env_factors: EnvFactors, kpi_df: pd.DataFrame) -> pd.DataFrame:
         if kpi_df.empty:
             logger.warning("Empty KPI DataFrame provided for forecasting. Returning empty forecast.")
-            forecast_data = [{
-                'Zone': zone,
-                'Horizon (Hours)': horizon,
-                'Violence Risk': 0.0,
-                'Accident Risk': 0.0,
-                'Medical Risk': 0.0,
-                'Trauma Risk': 0.0,
-                'Disease Risk': 0.0
-            } for zone in self.dm.zones for horizon in horizons]
-            self.forecast_df = pd.DataFrame(forecast_data)
-            return self.forecast_df
+            return pd.DataFrame()
 
-        if self.tcnn_model and TORCH_AVAILABLE:
-            try:
-                features = [
-                    'Incident Probability', 'Risk Entropy', 'Anomaly Score',
-                    'Trauma Clustering Score', 'Disease Surge Score',
-                    'Violence Clustering Score', 'Accident Clustering Score',
-                    'Medical Surge Score'
-                ]
-                feature_df = kpi_df[features].fillna(0).astype(np.float32)
-                if feature_df.empty or len(self.dm.zones) == 0:
-                    raise ValueError("Invalid input data for TCNN.")
-                X = feature_df.values.T.reshape(1, len(features), len(self.dm.zones))
-                with torch.no_grad():
-                    preds = self.tcnn_model(torch.from_numpy(X)).numpy().flatten()
-                
-                forecast_data = []
-                for zone_idx, zone in enumerate(self.dm.zones):
-                    for h_idx, horizon in enumerate(horizons):
-                        violence_idx = h_idx
-                        accident_idx = h_idx + len(horizons)
-                        medical_idx = h_idx + 2 * len(horizons)
-                        violence_risk = max(float(preds[violence_idx]) if violence_idx < len(preds) else 0.0, 0.0)
-                        accident_risk = max(float(preds[accident_idx]) if accident_idx < len(preds) else 0.0, 0.0)
-                        medical_risk = max(float(preds[medical_idx]) if medical_idx < len(preds) else 0.0, 0.0)
-                        forecast_data.append({
-                            'Zone': zone,
-                            'Horizon (Hours)': horizon,
-                            'Violence Risk': violence_risk,
-                            'Accident Risk': accident_risk,
-                            'Medical Risk': medical_risk,
-                            'Trauma Risk': violence_risk + accident_risk,
-                            'Disease Risk': medical_risk
-                        })
-                self.forecast_df = pd.DataFrame(forecast_data)
-                return self.forecast_df
-            except Exception as e:
-                logger.warning(f"TCNN forecasting failed: {e}. Using baseline forecast.", exc_info=True)
-        
-        decay_rates = self.config['model_params']['fallback_forecast_decay_rates']
         forecast_data = []
-        for zone in self.dm.zones:
-            zone_kpi = kpi_df[kpi_df['Zone'] == zone]
-            base_violence = zone_kpi['Violence Clustering Score'].iloc[0] if not zone_kpi.empty else 0.0
-            base_accident = zone_kpi['Accident Clustering Score'].iloc[0] if not zone_kpi.empty else 0.0
-            base_medical = zone_kpi['Medical Surge Score'].iloc[0] if not zone_kpi.empty else 0.0
-            base_trauma = zone_kpi['Trauma Clustering Score'].iloc[0] if not zone_kpi.empty else 0.0
-            base_disease = zone_kpi['Disease Surge Score'].iloc[0] if not zone_kpi.empty else 0.0
-            for horizon in horizons:
-                decay = decay_rates.get(str(horizon), 0.5)
-                forecast_data.append({
-                    'Zone': zone,
-                    'Horizon (Hours)': horizon,
-                    'Violence Risk': max(base_violence * decay, 0.0),
-                    'Accident Risk': max(base_accident * decay, 0.0),
-                    'Medical Risk': max(base_medical * decay, 0.0),
-                    'Trauma Risk': max(base_trauma * decay, 0.0),
-                    'Disease Risk': max(base_disease * decay, 0.0)
-                })
-        self.forecast_df = pd.DataFrame(forecast_data)
-        return self.forecast_df
-
-class StrategicAdvisor:
-    def __init__(self, dm: DataManager, config: Dict[str, any]):
-        self.dm = dm
-        self.config = config
-
-    def recommend_allocations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> List[Dict]:
-        if kpi_df.empty or forecast_df.empty or not self.dm.ambulances:
-            logger.warning("Insufficient data for allocation recommendations.")
-            return []
-        
-        available_ambulances = [amb for amb in self.dm.ambulances.values() if amb['status'] == 'Disponible']
-        if not available_ambulances:
-            logger.info("No available ambulances for reallocation.")
-            return []
-
-        weights = {float(k): v for k, v in self.config['model_params']['allocation_forecast_weights'].items()}
-        deficits = pd.Series(0.0, index=self.dm.zones)
         for zone in self.dm.zones:
             zone_kpi = kpi_df[kpi_df['Zone'] == zone]
             if zone_kpi.empty:
                 continue
-            current_deficit = zone_kpi['Ensemble Risk Score'].iloc[0]
-            zone_forecast = forecast_df[forecast_df['Zone'] == zone]
-            forecast_deficit = sum(
-                weights.get(row['Horizon (Hours)'], 0) * (
-                    row['Violence Risk'] + row['Accident Risk'] + row['Medical Risk']
-                ) for _, row in zone_forecast.iterrows()
-            )
-            deficits[zone] = current_deficit + forecast_deficit
-        
-        recommendations = []
-        sorted_deficits = deficits.sort_values(ascending=False)
-        for target_zone in sorted_deficits.index:
-            if not available_ambulances:
-                break
-            if sorted_deficits[target_zone] <= 0.5:
-                continue
-            zone_centroid = self.dm.zones_gdf.loc[target_zone, 'geometry'].centroid
-            closest_amb = min(
-                available_ambulances,
-                key=lambda amb: zone_centroid.distance(amb['location']) if isinstance(amb['location'], Point) else float('inf')
-            )
-            current_zone = next(
-                (z for z, d in self.dm.zones_gdf.iterrows() if d['geometry'].contains(closest_amb['location'])),
-                "Unknown"
-            )
+            base_prob = zone_kpi['Incident Probability'].iloc[0]
+            violence_score = zone_kpi['Violence Clustering Score'].iloc[0]
+            accident_score = zone_kpi['Accident Clustering Score'].iloc[0]
+            medical_score = zone_kpi['Medical Surge Score'].iloc[0]
             
-            if current_zone != target_zone and current_zone != "Unknown":
-                zone_forecast = forecast_df[(forecast_df['Zone'] == target_zone) & (forecast_df['Horizon (Hours)'] == 3)]
-                forecast_sum = zone_forecast[['Violence Risk', 'Accident Risk', 'Medical Risk']].sum(axis=1).iloc[0] if not zone_forecast.empty else 0.0
-                reason = f"High integrated risk in {target_zone} (Ensemble Score: {kpi_df.loc[kpi_df['Zone'] == target_zone, 'Ensemble Risk Score'].iloc[0]:.2f}, 3hr Forecast: {forecast_sum:.2f})"
-                recommendations.append({
-                    'unit': closest_amb['id'],
-                    'from': current_zone,
-                    'to': target_zone,
-                    'reason': reason
+            for horizon in self.config['forecast_horizons_hours']:
+                decay = self.config['model_params']['fallback_forecast_decay_rates'].get(str(horizon), 0.5)
+                violence_risk = violence_score * decay
+                accident_risk = accident_score * decay
+                medical_risk = medical_score * decay
+                forecast_data.append({
+                    'Zone': zone,
+                    'Horizon (Hours)': horizon,
+                    'Violence Risk': min(max(violence_risk, 0.0), 1.0),
+                    'Accident Risk': min(max(accident_risk, 0.0), 1.0),
+                    'Medical Risk': min(max(medical_risk, 0.0), 1.0),
+                    'Combined Risk': min(max(base_prob * decay, 0.0), 1.0)
                 })
-                available_ambulances.remove(closest_amb)
+        
+        forecast_df = pd.DataFrame(forecast_data)
+        self.forecast_df = forecast_df
+        return forecast_df
 
-        return recommendations[:2]
+    def generate_allocation_recommendations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> Dict[str, int]:
+        if kpi_df.empty or forecast_df.empty:
+            logger.warning("Empty KPI or forecast data. Returning default allocation.")
+            return {zone: 0 for zone in self.dm.zones}
+        
+        available_units = sum(1 for a in self.dm.ambulances.values() if a['status'] == 'Disponible')
+        weights = self.config['model_params']['allocation_forecast_weights']
+        risk_scores = {}
+        
+        for zone in self.dm.zones:
+            zone_forecast = forecast_df[forecast_df['Zone'] == zone]
+            if zone_forecast.empty:
+                risk_scores[zone] = 0.0
+                continue
+            weighted_risk = 0.0
+            for horizon in self.config['forecast_horizons_hours']:
+                horizon_str = str(horizon)
+                weight = weights.get(horizon_str, 0.1)
+                horizon_data = zone_forecast[zone_forecast['Horizon (Hours)'] == horizon]
+                if not horizon_data.empty:
+                    weighted_risk += weight * (
+                        horizon_data['Violence Risk'].iloc[0] +
+                        horizon_data['Accident Risk'].iloc[0] +
+                        horizon_data['Medical Risk'].iloc[0]
+                    ) / 3.0
+            risk_scores[zone] = weighted_risk
+        
+        total_risk = sum(risk_scores.values()) + 1e-9
+        allocations = {
+            zone: max(0, int(np.round(available_units * (risk / total_risk))))
+            for zone, risk in risk_scores.items()
+        }
+        total_allocated = sum(allocations.values())
+        if total_allocated < available_units:
+            max_risk_zone = max(risk_scores, key=risk_scores.get, default=self.dm.zones[0])
+            allocations[max_risk_zone] += available_units - total_allocated
+        elif total_allocated > available_units:
+            while total_allocated > available_units:
+                min_risk_zone = min(
+                    {k: v for k, v in risk_scores.items() if allocations[k] > 0},
+                    key=risk_scores.get,
+                    default=self.dm.zones[0]
+                )
+                allocations[min_risk_zone] -= 1
+                total_allocated -= 1
+        return allocations
 
 class ReportGenerator:
     @staticmethod
-    def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
+    def generate_pdf_report(kpi_df: pd.DataFrame, forecast_df: pd.DataFrame, allocations: Dict[str, int], env_factors: EnvFactors) -> io.BytesIO:
         buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter, title="RedShield AI: Phoenix Incident Report")
+        styles = getSampleStyleSheet()
+        elements = []
+
+        elements.append(Paragraph("RedShield AI: Phoenix Incident Report", styles['Title']))
+        elements.append(Spacer(1, 12))
+        elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        elements.append(Spacer(1, 12))
+        
+        elements.append(Paragraph("Environmental Factors", styles['Heading2']))
+        env_data = [
+            ["Is Holiday", str(env_factors.is_holiday)],
+            ["Weather", env_factors.weather],
+            ["Traffic Level", f"{env_factors.traffic_level:.2f}"],
+            ["Major Event", str(env_factors.major_event)],
+            ["Population Density", f"{env_factors.population_density:.2f}"],
+            ["Air Quality Index", f"{env_factors.air_quality_index:.2f}"],
+            ["Heatwave Alert", str(env_factors.heatwave_alert)]
+        ]
+        env_table = Table(env_data, colWidths=[200, 200])
+        env_table.setStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+        elements.append(env_table)
+        elements.append(Spacer(1, 12))
+
+        elements.append(Paragraph("KPI Summary", styles['Heading2']))
+        kpi_data = [['Zone'] + list(kpi_df.columns[1:])]
+        for _, row in kpi_df.iterrows():
+            kpi_data.append([str(row['Zone'])] + [f"{row[col]:.2f}" if isinstance(row[col], (int, float)) else str(row[col]) for col in kpi_df.columns[1:]])
+        kpi_table = Table(kpi_data, colWidths=[80] * len(kpi_data[0]))
+        kpi_table.setStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+        elements.append(kpi_table)
+        elements.append(Spacer(1, 12))
+
+        elements.append(Paragraph("Forecast Summary", styles['Heading2']))
+        forecast_data = [['Zone', 'Horizon (Hours)', 'Violence Risk', 'Accident Risk', 'Medical Risk', 'Combined Risk']]
+        for _, row in forecast_df.iterrows():
+            forecast_data.append([
+                str(row['Zone']),
+                f"{row['Horizon (Hours)']:.1f}",
+                f"{row['Violence Risk']:.2f}",
+                f"{row['Accident Risk']:.2f}",
+                f"{row['Medical Risk']:.2f}",
+                f"{row['Combined Risk']:.2f}"
+            ])
+        forecast_table = Table(forecast_data, colWidths=[80, 80, 80, 80, 80, 80])
+        forecast_table.setStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+        elements.append(forecast_table)
+        elements.append(Spacer(1, 12))
+
+        elements.append(Paragraph("Ambulance Allocation Recommendations", styles['Heading2']))
+        alloc_data = [['Zone', 'Recommended Units']]
+        for zone, units in allocations.items():
+            alloc_data.append([zone, str(units)])
+        alloc_table = Table(alloc_data, colWidths=[200, 200])
+        alloc_table.setStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ])
+        elements.append(alloc_table)
+
         try:
-            doc = SimpleDocTemplate(buffer, pagesize=letter)
-            styles = getSampleStyleSheet()
-            elements = [
-                Paragraph("RedShield AI: Emergency Response Report", styles['Title']),
-                Spacer(1, 12),
-                Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']),
-                Spacer(1, 12)
-            ]
-            
-            if not kpi_df.empty:
-                elements.append(Paragraph("Key Performance Indicators", styles['Heading2']))
-                kpi_data = [kpi_df.columns.tolist()] + kpi_df.round(3).values.tolist()
-                kpi_table = Table(kpi_data, colWidths=[50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50])
-                kpi_table.setStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ECF0F1')),
-                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('WORDWRAP', (0, 0), (-1, -1), True)
-                ])
-                elements.append(kpi_table)
-                elements.append(Spacer(1, 12))
-
-            if recommendations:
-                elements.append(Paragraph("Resource Allocation Recommendations", styles['Heading2']))
-                recommendation_data = [['Unit', 'From', 'To', 'Reason']] + [
-                    [rec['unit'], rec['from'], rec['to'], rec['reason']] for rec in recommendations
-                ]
-                rec_table = Table(recommendation_data, colWidths=[50, 50, 50, 350])
-                rec_table.setStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ECF0F1')),
-                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('WORDWRAP', (0, 0), (-1, -1), True)
-                ])
-                elements.append(rec_table)
-                elements.append(Spacer(1, 12))
-
-            if not forecast_df.empty:
-                elements.append(Paragraph("Risk Forecast", styles['Heading2']))
-                forecast_data = [forecast_df.columns.tolist()] + forecast_df.round(3).values.tolist()
-                forecast_table = Table(forecast_data, colWidths=[100, 50, 50, 50, 50, 50])
-                forecast_table.setStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ECF0F1')),
-                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('WORDWRAP', (0, 0), (-1, -1), True)
-                ])
-                elements.append(forecast_table)
-                elements.append(Spacer(1, 12))
-
             doc.build(elements)
             buffer.seek(0)
+            logger.info("PDF report generated successfully.")
             return buffer
         except Exception as e:
             logger.error(f"Failed to generate PDF report: {e}", exc_info=True)
+            st.error(f"Error generating PDF report: {e}")
             return io.BytesIO()
 
-class VisualizationSuite:
-    @staticmethod
-    def plot_risk_heatmap(dm: DataManager, kpi_df: pd.DataFrame) -> folium.Map:
-        if dm.zones_gdf.empty or kpi_df.empty:
-            logger.warning("Empty GeoDataFrame or KPI DataFrame provided for heatmap.")
-            return folium.Map(location=[32.53, -117.03], zoom_start=12)
+class Dashboard:
+    def __init__(self, dm: DataManager, engine: PredictiveAnalyticsEngine):
+        self.dm = dm
+        self.engine = engine
+        self.config = dm.config
+        self.env_factors = EnvFactors(
+            is_holiday=False,
+            weather="Clear",
+            traffic_level=1.0,
+            major_event=False,
+            population_density=sum(z['population'] for z in self.config['data']['zones'].values()) / len(self.config['data']['zones']),
+            air_quality_index=50.0,
+            heatwave_alert=False
+        )
+        st.session_state['historical_data'] = st.session_state.get('historical_data', [])
+
+    def render(self):
+        st.title("RedShield AI: Phoenix v3.2.0")
+        st.markdown("**Real-time Emergency Response Optimization Platform**")
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            self._render_controls()
+        with col2:
+            current_incidents = self.dm.get_current_incidents(self.env_factors)
+            kpi_df = self.engine.generate_kpis(st.session_state['historical_data'], self.env_factors, current_incidents)
+            forecast_df = self.engine.generate_forecast(st.session_state['historical_data'], self.env_factors, kpi_df)
+            allocations = self.engine.generate_allocation_recommendations(kpi_df, forecast_df)
+            
+            st.header("KPI Dashboard")
+            st.dataframe(kpi_df.style.format("{:.2f}", subset=kpi_df.select_dtypes(include=[np.number]).columns), use_container_width=True)
+            
+            st.header("Risk Forecast")
+            st.dataframe(forecast_df.style.format("{:.2f}", subset=['Violence Risk', 'Accident Risk', 'Medical Risk', 'Combined Risk']), use_container_width=True)
+            
+            st.header("Ambulance Allocation Recommendations")
+            st.table(allocations)
+            
+            st.header("Risk Heatmap")
+            self._render_heatmap(kpi_df)
+            
+            st.header("Report Generation")
+            if st.button("Generate PDF Report"):
+                pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, forecast_df, allocations, self.env_factors)
+                if pdf_buffer.getvalue():
+                    st.download_button(
+                        label="Download PDF Report",
+                        data=pdf_buffer,
+                        file_name=f"RedShield_Phoenix_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf"
+                    )
+
+    def _render_controls(self):
+        st.sidebar.header("Environmental Factors")
+        self.env_factors = EnvFactors(
+            is_holiday=st.sidebar.checkbox("Is Holiday", value=self.env_factors.is_holiday),
+            weather=st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=["Clear", "Rain", "Fog"].index(self.env_factors.weather)),
+            traffic_level=st.sidebar.slider("Traffic Level", 0.5, 2.0, self.env_factors.traffic_level, 0.1),
+            major_event=st.sidebar.checkbox("Major Event", value=self.env_factors.major_event),
+            population_density=st.sidebar.number_input("Population Density", min_value=1000.0, max_value=1000000.0, value=self.env_factors.population_density, step=1000.0),
+            air_quality_index=st.sidebar.number_input("Air Quality Index", min_value=0.0, max_value=500.0, value=self.env_factors.air_quality_index, step=10.0),
+            heatwave_alert=st.sidebar.checkbox("Heatwave Alert", value=self.env_factors.heatwave_alert)
+        )
+        
+        st.sidebar.header("Historical Data Upload")
+        uploaded_file = st.sidebar.file_uploader("Upload Historical Incidents (JSON)", type=["json"])
+        if uploaded_file:
+            try:
+                historical_data = json.load(uploaded_file)
+                if isinstance(historical_data, list):
+                    st.session_state['historical_data'] = historical_data
+                    st.sidebar.success("Historical data uploaded successfully.")
+                else:
+                    st.sidebar.error("Invalid JSON format: Expected a list of incident records.")
+            except Exception as e:
+                st.sidebar.error(f"Error loading historical data: {e}")
+        
+        if st.sidebar.button("Download Sample Historical Data"):
+            sample_buffer = self.dm.generate_sample_history_file()
+            if sample_buffer.getvalue():
+                st.sidebar.download_button(
+                    label="Download Sample JSON",
+                    data=sample_buffer,
+                    file_name="sample_historical_data.json",
+                    mime="application/json"
+                )
+
+    def _render_heatmap(self, kpi_df: pd.DataFrame):
+        if self.dm.zones_gdf.empty or kpi_df.empty:
+            st.warning("No valid zone data or KPIs available for heatmap.")
+            return
         
         try:
-            center = dm.zones_gdf.unary_union.centroid
-            heatmap = folium.Map(location=[center.y, center.x], zoom_start=12)
-            colors = {0.0: '#00FF00', 0.5: '#FFFF00', 1.0: '#FF0000'}
-            
-            for idx, row in dm.zones_gdf.iterrows():
-                risk_score = kpi_df[kpi_df['Zone'] == idx]['Ensemble Risk Score'].iloc[0] if idx in kpi_df['Zone'].values else 0.0
-                risk_score = min(max(risk_score, 0.0), 1.0)
-                if risk_score < 0.5:
-                    color = colors[0.0]
-                elif risk_score < 0.75:
-                    color = colors[0.5]
-                else:
-                    color = colors[1.0]
+            center = self.dm.zones_gdf.unary_union.centroid
+            m = folium.Map(location=[center.y, center.x], zoom_start=12, tiles="cartodbpositron")
+            for zone, row in self.dm.zones_gdf.iterrows():
+                risk_score = kpi_df[kpi_df['Zone'] == zone]['Ensemble Risk Score'].iloc[0] if zone in kpi_df['Zone'].values else 0.0
+                color = f"#{int(255 * risk_score):02x}{int(255 * (1 - risk_score)):02x}00"
                 folium.GeoJson(
                     row['geometry'],
                     style_function=lambda x, color=color: {
                         'fillColor': color,
-                        'color': '#000000',
-                        'weight': 2,
+                        'color': 'black',
+                        'weight': 1,
                         'fillOpacity': 0.5
                     },
-                    tooltip=f"{idx} (Risk: {risk_score:.2f})"
-                ).add_to(heatmap)
-            
-            for amb in dm.ambulances.values():
-                if not isinstance(amb['location'], Point):
-                    continue
-                folium.Marker(
-                    location=[amb['location'].y, amb['location'].x],
-                    popup=f"{amb['id']} ({amb['status']})",
-                    icon=folium.Icon(
-                        color='blue' if amb['status'] == 'Disponible' else 'red',
-                        icon='ambulance',
-                        prefix='fa'
-                    )
-                ).add_to(heatmap)
-            
-            return heatmap
+                    tooltip=f"{zone}: Risk {risk_score:.2f}"
+                ).add_to(m)
+            st_folium(m, width=700, height=500)
         except Exception as e:
-            logger.error(f"Failed to generate heatmap: {e}", exc_info=True)
-            return folium.Map(location=[32.53, -117.03], zoom_start=12)
+            logger.error(f"Failed to render heatmap: {e}", exc_info=True)
+            st.error(f"Error rendering heatmap: {e}")
 
 def main():
     config = load_config()
     dm = get_data_manager(config)
-    pae = PredictiveAnalyticsEngine(dm, config)
-    advisor = StrategicAdvisor(dm, config)
-    
-    st.sidebar.header("Environmental Factors")
-    is_holiday = st.sidebar.checkbox("Is Holiday?", value=False)
-    weather = st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=0)
-    traffic_level = st.sidebar.slider("Traffic Level", 0.0, 2.0, 1.0)
-    major_event = st.sidebar.checkbox("Major Event?", value=False)
-    population_density = st.sidebar.slider("Population Density (per sq km)", 1000, 100000, 50000)
-    air_quality_index = st.sidebar.slider("Air Quality Index", 0, 500, 50)
-    heatwave_alert = st.sidebar.checkbox("Heatwave Alert?", value=False)
-    
-    env_factors = EnvFactors(
-        is_holiday=is_holiday,
-        weather=weather,
-        traffic_level=traffic_level,
-        major_event=major_event,
-        population_density=population_density,
-        air_quality_index=air_quality_index,
-        heatwave_alert=heatwave_alert
-    )
-    
-    current_incidents = dm.get_current_incidents(env_factors)
-    historical_data = []
-    uploaded_file = st.sidebar.file_uploader("Upload Historical Data (JSON)", type=['json'])
-    if uploaded_file:
-        try:
-            historical_data = json.load(uploaded_file)
-            if not isinstance(historical_data, list):
-                raise ValueError("Historical data must be a list of records.")
-        except Exception as e:
-            st.error(f"Failed to load historical data: {e}")
-            historical_data = []
-    if not historical_data:
-        historical_data = json.load(dm.generate_sample_history_file())
-    
-    kpi_df = pae.generate_kpis(historical_data, env_factors, current_incidents)
-    forecast_df = pae.forecast_risk(kpi_df)
-    recommendations = advisor.recommend_allocations(kpi_df, forecast_df)
-    
-    st.header("Key Performance Indicators")
-    if not kpi_df.empty:
-        st.dataframe(kpi_df.round(3))
-    else:
-        st.warning("No KPI data available.")
-    
-    st.header("Risk Forecast")
-    if not forecast_df.empty:
-        st.dataframe(forecast_df.round(3))
-    else:
-        st.warning("No forecast data available.")
-    
-    st.header("Resource Allocation Recommendations")
-    if recommendations:
-        st.table(recommendations)
-    else:
-        st.info("No reallocation recommendations at this time.")
-    
-    st.header("Risk Heatmap")
-    heatmap = VisualizationSuite.plot_risk_heatmap(dm, kpi_df)
-    st_folium(heatmap, width=700, height=500, key="heatmap")
-    
-    st.header("Generate Report")
-    if st.button("Download PDF Report"):
-        pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, recommendations, forecast_df)
-        if pdf_buffer.getvalue():
-            st.download_button(
-                label="Download Report",
-                data=pdf_buffer,
-                file_name=f"RedShield_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                mime="application/pdf"
-            )
-        else:
-            st.error("Failed to generate PDF report.")
+    engine = PredictiveAnalyticsEngine(dm, config)
+    dashboard = Dashboard(dm, engine)
+    dashboard.render()
 
 if __name__ == "__main__":
     main()
