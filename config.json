@@ -78,3 +78,106 @@
       "aqi_multiplier": 1.5
     },
     "sir_model": {
+      "beta": 0.3,
+      "gamma": 0.1,
+      "noise_scale": 0.05
+    },
+    "laplacian_diffusion_factor": 0.1,
+    "response_time_penalty": 3.0,
+    "copula_correlation": 0.2,
+    "ensemble_weights": {
+      "hawkes": 9,
+      "sir": 8,
+      "bayesian": 8,
+      "graph": 7,
+      "chaos": 7,
+      "info": 9,
+      "tcnn": 10,
+      "tcnn_fallback": 7,
+      "game": 8,
+      "copula": 8,
+      "violence": 9,
+      "accident": 8,
+      "medical": 8
+    },
+    "chaos_amplifier": 1.5,
+    "fallback_forecast_decay_rates": {
+      "0.5": 0.95,
+      "1": 0.9,
+      "3": 0.8,
+      "6": 0.7,
+      "12": 0.6,
+      "24": 0.5,
+      "72": 0.3,
+      "144": 0.2
+    },
+    "allocation_forecast_weights": {
+      "0.5": 0.3,
+      "1": 0.25,
+      "3": 0.2,
+      "6": 0.15,
+      "12": 0.1,
+      "24": 0.08,
+      "72": 0.07,
+      "144": 0.05
+    }
+  },
+  "bayesian_network": {
+    "structure": [
+      ["Holiday", "IncidentRate"],
+      ["Weather", "IncidentRate"],
+      ["MajorEvent", "IncidentRate"],
+      ["AirQuality", "IncidentRate"],
+      ["Heatwave", "IncidentRate"]
+    ],
+    "cpds": {
+      "Holiday": {
+        "card": 2,
+        "values": [[0.9], [0.1]],
+        "evidence": null,
+        "evidence_card": null
+      },
+      "Weather": {
+        "card": 2,
+        "values": [[0.7], [0.3]],
+        "evidence": null,
+        "evidence_card": null
+      },
+      "MajorEvent": {
+        "card": 2,
+        "values": [[0.8], [0.2]],
+        "evidence": null,
+        "evidence_card": null
+      },
+      "AirQuality": {
+        "card": 2,
+        "values": [[0.8], [0.2]],
+        "evidence": null,
+        "evidence_card": null
+      },
+      "Heatwave": {
+        "card": 2,
+        "values": [[0.9], [0.1]],
+        "evidence": null,
+        "evidence_card": null
+      },
+      "IncidentRate": {
+        "card": 3,
+        "values": [
+          [0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2, 0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2, 0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2, 0.6, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3, 0.2],
+          [0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5, 0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5, 0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5, 0.3, 0.3, 0.4, 0.4, 0.3, 0.4, 0.4, 0.5],
+          [0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3, 0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3, 0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3, 0.1, 0.2, 0.2, 0.3, 0.2, 0.2, 0.3, 0.3]
+        ],
+        "evidence": ["Holiday", "Weather", "MajorEvent", "AirQuality", "Heatwave"],
+        "evidence_card": [2, 2, 2, 2, 2]
+      }
+    }
+  },
+  "tcnn_params": {
+    "input_size": 8,
+    "output_size": 24,
+    "channels": [16, 32, 64],
+    "kernel_size": 2,
+    "dropout": 0.2
+  }
+}
