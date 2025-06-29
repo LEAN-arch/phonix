@@ -913,6 +913,7 @@ class StrategicAdvisor:
 
         return recommendations[:2]
         class ReportGenerator:
+   class ReportGenerator:
     @staticmethod
     def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
         buffer = io.BytesIO()
