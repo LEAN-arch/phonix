@@ -441,7 +441,7 @@ class DataManager:
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
-        class PredictiveAnalyticsEngine:
+class PredictiveAnalyticsEngine:
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
@@ -894,8 +894,7 @@ class StrategicAdvisor:
                 zone_centroid = self.dm.zones_gdf.loc[target_zone, 'geometry'].centroid
                 closest_amb = min(
                     available_ambulances,
-                    key=lambda amb: zone_centroid.distanceრი
-distance(amb['location'])
+                    key=lambda amb: zone_centroid.distance(amb['location'])
                 )
                 current_zone = next(
                     (z for z, d in self.dm.zones_gdf.iterrows() if d['geometry'].contains(closest_amb['location'])),
