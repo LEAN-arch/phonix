@@ -149,75 +149,79 @@ class ReportGenerator:
         styles = getSampleStyleSheet()
         elements = []
 
-        elements.append(Paragraph("RedShield AI: Phoenix Incident Report", styles['Title']))
-        elements.append(Spacer(1, 12))
-        elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
-        elements.append(Spacer(1, 12))
-        
-        elements.append(Paragraph("Environmental Factors", styles['Heading2']))
-        env_data = [
-            ["Factor", "Value"],
-            ["Is Holiday", str(env_factors.is_holiday)],
-            ["Weather", env_factors.weather],
-            ["Traffic Level", f"{env_factors.traffic_level:.2f}"],
-            ["Major Event", str(env_factors.major_event)],
-            ["Avg. Population Density", f"{env_factors.population_density:.0f}"],
-            ["Air Quality Index", f"{env_factors.air_quality_index:.1f}"],
-            ["Heatwave Alert", str(env_factors.heatwave_alert)]
-        ]
-        env_table = Table(env_data, colWidths=[200, 200])
-        env_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
-        ]))
-        elements.append(env_table)
-        elements.append(Spacer(1, 12))
-
-        elements.append(Paragraph("Key Performance Indicators (KPIs)", styles['Heading2']))
-        if not kpi_df.empty:
-            kpi_df_report = kpi_df.round(2)
-            kpi_data = [kpi_df_report.columns.tolist()] + kpi_df_report.values.tolist()
-            kpi_table = Table(kpi_data, hAlign='LEFT')
-            kpi_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
-            ]))
-            elements.append(kpi_table)
-        elements.append(Spacer(1, 12))
-        
-        elements.append(Paragraph("Forecast Summary (Combined Risk)", styles['Heading2']))
-        if not forecast_df.empty:
-            forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk').round(2)
-            
-            # --- BUG FIX STARTS HERE ---
-            # Convert the row (a pandas Series) to a list before concatenating with another list.
-            header = [['Zone'] + forecast_pivot.columns.tolist()]
-            table_data = [[idx] + row.tolist() for idx, row in forecast_pivot.iterrows()]
-            forecast_data = header + table_data
-            # --- BUG FIX ENDS HERE ---
-
-            forecast_table = Table(forecast_data, hAlign='LEFT')
-            forecast_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
-            ]))
-            elements.append(forecast_table)
-        elements.append(Spacer(1, 12))
-        
-        elements.append(Paragraph("Ambulance Allocation Recommendations", styles['Heading2']))
-        alloc_data = [['Zone', 'Recommended Units']] + list(allocations.items())
-        alloc_table = Table(alloc_data, colWidths=[200, 200])
-        alloc_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
-        ]))
-        elements.append(alloc_table)
-        
         try:
+            elements.append(Paragraph("RedShield AI: Phoenix Incident Report", styles['Title']))
+            elements.append(Spacer(1, 12))
+            elements.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+            elements.append(Spacer(1, 12))
+            
+            # --- Environmental Factors Table ---
+            elements.append(Paragraph("Environmental Factors", styles['Heading2']))
+            env_data = [
+                ["Factor", "Value"],
+                ["Is Holiday", str(env_factors.is_holiday)],
+                ["Weather", str(env_factors.weather)],
+                ["Traffic Level", f"{env_factors.traffic_level:.2f}"],
+                ["Major Event", str(env_factors.major_event)],
+                ["Avg. Population Density", f"{env_factors.population_density:.0f}"],
+                ["Air Quality Index", f"{env_factors.air_quality_index:.1f}"],
+                ["Heatwave Alert", str(env_factors.heatwave_alert)]
+            ]
+            env_table = Table(env_data, colWidths=[200, 200])
+            env_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
+            ]))
+            elements.append(env_table)
+            elements.append(Spacer(1, 12))
+
+            # --- KPI Table ---
+            elements.append(Paragraph("Key Performance Indicators (KPIs)", styles['Heading2']))
+            if not kpi_df.empty:
+                kpi_df_report = kpi_df.round(3)
+                # FIX: Explicitly convert all items to strings for ReportLab stability
+                kpi_header = [str(col) for col in kpi_df_report.columns]
+                kpi_body = [[str(item) for item in row] for row in kpi_df_report.values.tolist()]
+                kpi_data = [kpi_header] + kpi_body
+                kpi_table = Table(kpi_data, hAlign='LEFT')
+                kpi_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
+                ]))
+                elements.append(kpi_table)
+            elements.append(Spacer(1, 12))
+            
+            # --- Forecast Table ---
+            elements.append(Paragraph("Forecast Summary (Combined Risk)", styles['Heading2']))
+            if not forecast_df.empty:
+                forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk').round(3)
+                # FIX: Explicitly convert all items to strings for ReportLab stability
+                forecast_header = [['Zone'] + [str(col) for col in forecast_pivot.columns]]
+                forecast_body = [[str(idx)] + [str(item) for item in row.tolist()] for idx, row in forecast_pivot.iterrows()]
+                forecast_data = forecast_header + forecast_body
+                forecast_table = Table(forecast_data, hAlign='LEFT')
+                forecast_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
+                ]))
+                elements.append(forecast_table)
+            elements.append(Spacer(1, 12))
+            
+            # --- Allocation Table ---
+            elements.append(Paragraph("Ambulance Allocation Recommendations", styles['Heading2']))
+            # FIX: Explicitly convert all items to strings for ReportLab stability
+            alloc_data = [['Zone', 'Recommended Units']] + [[str(zone), str(units)] for zone, units in allocations.items()]
+            alloc_table = Table(alloc_data, colWidths=[200, 200])
+            alloc_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
+            ]))
+            elements.append(alloc_table)
+            
             doc.build(elements)
             buffer.seek(0)
             logger.info("PDF report generated successfully.")
