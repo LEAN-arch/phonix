@@ -45,15 +45,25 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 POPULATION_DENSITY_NORMALIZATION = 100000.0
 
 # --- L1: DATA STRUCTURES ---
+# --- ENHANCEMENT: The EnvFactors dataclass is updated to include new strategic factors ---
 @dataclass(frozen=True)
 class EnvFactors:
+    # Existing factors
     is_holiday: bool
     weather: str
     traffic_level: float
-    major_event: bool
+    major_event: bool # This will be derived from public_event_type for backward compatibility
     population_density: float
     air_quality_index: float
     heatwave_alert: bool
+    # New strategic factors added based on SME input
+    day_type: str
+    time_of_day: str
+    public_event_type: str
+    hospital_divert_status: float
+    police_activity: str
+    school_in_session: bool
+
 
 # --- L2: DEEP LEARNING MODEL ---
 class TCNN(nn.Module if TORCH_AVAILABLE else object):
@@ -164,8 +174,15 @@ class DataManager:
         return incidents
     
     def generate_sample_history_file(self) -> io.BytesIO:
+        # ENHANCEMENT: Update this call to use the new EnvFactors structure with default values
+        default_env = EnvFactors(
+            is_holiday=False, weather="Clear", traffic_level=1.0, major_event=False,
+            population_density=50000, air_quality_index=50.0, heatwave_alert=False,
+            day_type='Weekday', time_of_day='Midday', public_event_type='None',
+            hospital_divert_status=0.0, police_activity='Normal', school_in_session=True
+        )
         buffer = io.BytesIO()
-        buffer.write(json.dumps([{'incidents': self._generate_synthetic_incidents(EnvFactors(False,"Clear",1.0,False,50000,50,False)), 'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()} for i in range(3)], indent=2).encode('utf-8'))
+        buffer.write(json.dumps([{'incidents': self._generate_synthetic_incidents(default_env), 'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()} for i in range(3)], indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
 
@@ -204,7 +221,6 @@ class PredictiveAnalyticsEngine:
 
     @st.cache_data
     def generate_kpis(_self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
-        # --- ADDITION: Include new 'Information Value Index' in the KPI list ---
         kpi_cols = ['Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Information Value Index', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 'Ensemble Risk Score']
         kpi_df = pd.DataFrame(0, index=_self.dm.zones, columns=kpi_cols, dtype=float)
 
@@ -230,9 +246,24 @@ class PredictiveAnalyticsEngine:
         accident_counts = incidents_with_zones[incidents_with_zones['type'] == 'Trauma-Accident']['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         medical_counts = incidents_with_zones[incidents_with_zones['type'].isin(['Medical-Chronic', 'Medical-Acute'])]['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         
+        # --- ENHANCEMENT: Create dynamic multipliers from new strategic factors ---
+        day_time_multiplier = {'Weekday': 1.0, 'Friday': 1.2, 'Weekend': 1.3}.get(env_factors.day_type, 1.0)
+        day_time_multiplier *= {'Morning Rush': 1.1, 'Midday': 0.9, 'Evening Rush': 1.2, 'Night': 1.4}.get(env_factors.time_of_day, 1.0)
+        
+        event_multiplier = 1.0
+        violence_event_mod = 1.0
+        medical_event_mod = 1.0
+        if env_factors.public_event_type != 'None':
+            event_multiplier = {'Sporting Event': 1.6, 'Concert/Festival': 1.8, 'Public Protest': 2.0}.get(env_factors.public_event_type, 1.0)
+            violence_event_mod = {'Sporting Event': 1.8, 'Public Protest': 2.5}.get(env_factors.public_event_type, 1.0)
+            medical_event_mod = {'Concert/Festival': 2.0}.get(env_factors.public_event_type, 1.0)
+
+        effective_traffic = env_factors.traffic_level * (1.0 if env_factors.school_in_session else 0.8)
+        police_activity_mod = {'Low': 1.1, 'Normal': 1.0, 'High': 0.85}.get(env_factors.police_activity, 1.0)
+        system_strain_penalty = 1.0 + (env_factors.hospital_divert_status * 2.0) # 0% divert -> 1x, 100% divert -> 3x penalty
+        
         if _self.bn_model:
             try:
-                inference = VariableElimination(_self.bn_model)
                 evidence = {'Holiday': 1 if env_factors.is_holiday else 0, 'Weather': 1 if env_factors.weather != 'Clear' else 0, 'MajorEvent': 1 if env_factors.major_event else 0, 'AirQuality': 1 if env_factors.air_quality_index > 100 else 0, 'Heatwave': 1 if env_factors.heatwave_alert else 0}
                 result = inference.query(variables=['IncidentRate'], evidence=evidence, show_progress=False)
                 rate_probs = result.values
@@ -244,6 +275,9 @@ class PredictiveAnalyticsEngine:
         else:
             baseline_rate, kpi_df['Bayesian Confidence Score'] = 5.0, 0.5
 
+        # --- ENHANCEMENT: Apply new multipliers to the baseline rate ---
+        baseline_rate *= day_time_multiplier * event_multiplier
+        
         current_dist = incident_counts / (incident_counts.sum() + 1e-9)
         prior_dist = pd.Series(_self.config['data']['distributions']['zone']).reindex(_self.dm.zones, fill_value=1e-9)
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -258,28 +292,26 @@ class PredictiveAnalyticsEngine:
 
         hawkes_params = _self.model_params['hawkes_process']
         sir_params = _self.model_params['sir_model']
-        kpi_df['Violence Clustering Score'] = (violence_counts * hawkes_params['kappa'] * hawkes_params['violence_weight']).clip(0, 1)
-        kpi_df['Accident Clustering Score'] = (accident_counts * hawkes_params['kappa'] * hawkes_params['trauma_weight']).clip(0, 1)
-        kpi_df['Medical Surge Score'] = (_self.dm.zones_gdf['population'].apply(lambda s: sir_params['beta'] * medical_counts.get(s, 0) / (s + 1e-9) - sir_params['gamma'])).clip(0, 1)
+        
+        # --- ENHANCEMENT: Apply multipliers to sub-model scores ---
+        kpi_df['Violence Clustering Score'] = (violence_counts * hawkes_params['kappa'] * hawkes_params['violence_weight'] * violence_event_mod * police_activity_mod).clip(0, 1)
+        kpi_df['Accident Clustering Score'] = (accident_counts * hawkes_params['kappa'] * hawkes_params['trauma_weight'] * effective_traffic).clip(0, 1)
+        kpi_df['Medical Surge Score'] = (_self.dm.zones_gdf['population'].apply(lambda s: sir_params['beta'] * medical_counts.get(s, 0) / (s + 1e-9) - sir_params['gamma']) * medical_event_mod).clip(0, 1)
+        
         kpi_df['Trauma Clustering Score'] = (kpi_df['Violence Clustering Score'] + kpi_df['Accident Clustering Score']) / 2
         kpi_df['Disease Surge Score'] = kpi_df['Medical Surge Score']
         
         kpi_df['Incident Probability'] = base_probs
-        # --- ENHANCEMENT: Improved Expected Incident Volume calculation ---
-        # The expected number of incidents is the rate (base_probs) multiplied by an intensity factor (e.g., 10 for a time window)
-        kpi_df['Expected Incident Volume'] = (base_probs * 10).round()
+        kpi_df['Expected Incident Volume'] = (base_probs * 10 * effective_traffic).round()
         
         available_units = sum(1 for a in _self.dm.ambulances.values() if a['status'] == 'Disponible')
         needed_units = kpi_df['Expected Incident Volume'].sum()
-        kpi_df['Resource Adequacy Index'] = (available_units / (needed_units + 1e-9)).clip(0, 1)
-
-        kpi_df['Response Time Estimate'] = 10.0 * (1 + _self.model_params['response_time_penalty'] * (1-kpi_df['Resource Adequacy Index']))
+        
+        # --- ENHANCEMENT: Apply system strain penalty to resource and response KPIs ---
+        kpi_df['Resource Adequacy Index'] = (available_units / (needed_units * system_strain_penalty + 1e-9)).clip(0, 1)
+        kpi_df['Response Time Estimate'] = (10.0 * system_strain_penalty) * (1 + _self.model_params['response_time_penalty'] * (1-kpi_df['Resource Adequacy Index']))
         
         kpi_df['Ensemble Risk Score'] = _self.calculate_ensemble_risk_score(kpi_df, historical_data)
-
-        # --- ADDITION: Calculate Information Value Index ---
-        # A simple proxy is the standard deviation of the risk scores. High std means clear hotspots (high info value).
-        # Low std means risk is evenly spread (low info value for differentiation).
         info_value = kpi_df['Ensemble Risk Score'].std()
         kpi_df['Information Value Index'] = info_value
 
