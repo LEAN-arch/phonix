@@ -14,7 +14,7 @@ from core import DataManager, PredictiveAnalyticsEngine, EnvFactors
 from utils import load_config, ReportGenerator
 
 # --- System Setup ---
-st.set_page_config(page_title="RedShield AI: Phoenix v3.2.1", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v3.2.2", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 
@@ -40,7 +40,7 @@ class Dashboard:
 
     def render(self):
         """Main rendering loop for the Streamlit application."""
-        st.title("RedShield AI: Phoenix v3.2.1")
+        st.title("RedShield AI: Phoenix v3.2.2")
         st.markdown("**Real-time Emergency Response Optimization Platform**")
 
         self._render_sidebar()
@@ -68,8 +68,9 @@ class Dashboard:
             st.dataframe(display_kpis.style.format("{:.2f}").background_gradient(cmap='Reds', subset=['Ensemble Risk Score']), use_container_width=True)
 
         st.header("Risk Forecast")
-        forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk')
-        st.dataframe(forecast_pivot.style.format("{:.2f}").background_gradient(cmap='YlOrRd', axis=1), use_container_width=True)
+        if not forecast_df.empty:
+            forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk')
+            st.dataframe(forecast_pivot.style.format("{:.2f}").background_gradient(cmap='YlOrRd', axis=1), use_container_width=True)
 
     def _render_sidebar(self):
         st.sidebar.header("Environmental Factors")
@@ -113,24 +114,34 @@ class Dashboard:
 
         try:
             map_gdf = self.dm.zones_gdf.join(kpi_df.set_index('Zone'))
+            # --- BUG FIX STARTS HERE ---
+            # Reset the index so 'name' becomes a column that Folium can find.
+            map_gdf.reset_index(inplace=True)
+            # --- BUG FIX ENDS HERE ---
+
             center = map_gdf.unary_union.centroid
             m = folium.Map(location=[center.y, center.x], zoom_start=12, tiles="cartodbpositron")
 
             choropleth = folium.Choropleth(
-                geo_data=map_gdf.to_json(), data=map_gdf,
-                columns=['Zone', 'Ensemble Risk Score'], key_on='feature.id',
-                fill_color='YlOrRd', fill_opacity=0.7, line_opacity=0.2, legend_name='Ensemble Risk Score'
+                geo_data=map_gdf.to_json(),
+                data=map_gdf,
+                # --- BUG FIX STARTS HERE ---
+                # Use the correct column 'name' for the key and 'Ensemble Risk Score' for the value.
+                columns=['name', 'Ensemble Risk Score'],
+                # --- BUG FIX ENDS HERE ---
+                key_on='feature.properties.name', # The key in the GeoJSON is now under properties
+                fill_color='YlOrRd',
+                fill_opacity=0.7,
+                line_opacity=0.2,
+                legend_name='Ensemble Risk Score'
             ).add_to(m)
 
-            for _, row in map_gdf.iterrows():
-                zone_name = row.name
-                sim_geo = folium.GeoJson(row.geometry, style_function=lambda x: {'color': 'black', 'weight': 1, 'fillOpacity': 0})
-                folium.map.Popup(f"""
-                    <b>Zone:</b> {zone_name}<br>
-                    <b>Risk:</b> {row['Ensemble Risk Score']:.3f}<br>
-                    <b>Allocated Units:</b> {allocations.get(zone_name, 0)}
-                """).add_to(sim_geo)
-                sim_geo.add_to(m)
+            # Use GeoJsonTooltip for a cleaner implementation
+            folium.GeoJsonTooltip(
+                fields=["name", "Ensemble Risk Score"],
+                aliases=["Zone:", "Risk Score:"],
+                style=("background-color: white; color: #333333; font-family: arial; font-size: 12px; padding: 10px;")
+            ).add_to(choropleth.geojson)
             
             st_folium(m, use_container_width=True, height=550)
         except Exception as e:
