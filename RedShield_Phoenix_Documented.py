@@ -41,7 +41,7 @@ except ImportError:
 class TCNN(nn.Module if TORCH_AVAILABLE else object):
     def __init__(self, input_size: int, output_size: int, channels: List[int], kernel_size: int, dropout: float):
         if not TORCH_AVAILABLE:
-            super().__init__()  # Initialize as plain object if torch is unavailable
+            super().__init__()
             return
         super(TCNN, self).__init__()
         layers = []
@@ -131,6 +131,7 @@ def load_config(config_path: str = "config.json") -> Dict[str, any]:
         mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
         config['mapbox_api_key'] = mapbox_key if mapbox_key and "YOUR_KEY" not in mapbox_key else None
 
+        logger.debug(f"Loaded config: {json.dumps(config, indent=2)}")
         validate_config(config)
         logger.info("System configuration loaded and validated successfully.")
         return config
@@ -236,7 +237,7 @@ def get_default_config() -> Dict[str, any]:
             }
         },
         "tcnn_params": {
-            "input_size": 8,
+            "input_size": 9,
             "output_size": 24,
             "channels": [16, 32, 64],
             "kernel_size": 2,
@@ -262,7 +263,7 @@ def validate_config(config: Dict[str, any]) -> None:
         if 'population' not in data or not isinstance(data['population'], (int, float)) or data['population'] <= 0:
             raise ValueError(f"Invalid population for zone '{zone}'.")
         if 'crime_rate_modifier' not in data or not isinstance(data['crime_rate_modifier'], (int, float)):
-            logger.warning(f"Invalid or missing crime_rate_modifier for zone '{zone}'. Setting to default (1.0).")
+            logger.warning(f"Invalid or missing crime_rate_modifier for zone '{zone}' (value: {data.get('crime_rate_modifier')}). Setting to default (1.0).")
             data['crime_rate_modifier'] = 1.0
         elif data['crime_rate_modifier'] <= 0:
             logger.warning(f"Non-positive crime_rate_modifier ({data['crime_rate_modifier']}) for zone '{zone}'. Setting to default (1.0).")
@@ -459,14 +460,13 @@ class DataManager:
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
-
-class PredictiveAnalyticsEngine:
+        class PredictiveAnalyticsEngine:
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
         self.bn_model = self._build_bayesian_network()
         self.tcnn_model = self._initialize_tcnn()
-        self.forecast_df = pd.DataFrame()  # Initialize forecast_df
+        self.forecast_df = pd.DataFrame()
         
         weights_config = self.config['model_params']['ensemble_weights']
         self.method_weights = {
@@ -493,7 +493,13 @@ class PredictiveAnalyticsEngine:
             return None
         try:
             bn_config = _self.config['bayesian_network']
-            model = BayesianNetwork(bn_config['structure'])
+            nodes = set(bn_config['cpds'].keys())
+            for edge in bn_config['structure']:
+                nodes.add(edge[0])
+                nodes.add(edge[1])
+            model = BayesianNetwork()
+            model.add_nodes_from(nodes)
+            model.add_edges_from(bn_config['structure'])
             for node, params in bn_config['cpds'].items():
                 model.add_cpds(TabularCPD(
                     variable=node,
@@ -516,7 +522,7 @@ class PredictiveAnalyticsEngine:
             return None
         try:
             model = TCNN(**_self.config['tcnn_params'])
-            model.eval()  # Set to evaluation mode
+            model.eval()
             logger.info("TCNN model initialized.")
             return model
         except Exception as e:
@@ -559,9 +565,9 @@ class PredictiveAnalyticsEngine:
                 value = zone_kpi[metric].iloc[0] if metric in zone_kpi.columns else 0.0
                 weight = self.method_weights.get(weight_key, 0)
                 if metric == 'Resource Adequacy Index':
-                    value = 1 - value  # Inverse for adequacy
+                    value = 1 - value
                 if metric in ['Risk Entropy', 'Anomaly Score']:
-                    value *= 0.5  # Equal weighting for info metrics
+                    value *= 0.5
                 if metric == 'Chaos Sensitivity Score':
                     value *= chaos_amplifier
                 contributions.append(normalize(pd.Series([value]))[0] * weight)
@@ -606,7 +612,6 @@ class PredictiveAnalyticsEngine:
             logger.warning("No historical or current incident data provided. Returning default KPI DataFrame.")
             return pd.DataFrame(kpi_data)
 
-        # Combine historical and current incidents
         all_incidents = []
         for record in historical_data + [{'timestamp': pd.Timestamp.now().isoformat(), 'incidents': current_incidents}]:
             if not isinstance(record, dict) or 'incidents' not in record:
@@ -624,7 +629,6 @@ class PredictiveAnalyticsEngine:
 
         df = pd.DataFrame(all_incidents)
         
-        # Map locations to zones
         def get_zone(point):
             if not isinstance(point, Point):
                 return None
@@ -644,7 +648,6 @@ class PredictiveAnalyticsEngine:
                 logger.error("No zone or location data found in incidents. Expected 'location' or one of: %s", possible_zone_columns)
                 return pd.DataFrame(kpi_data)
 
-        # Filter out incidents with no valid zone
         df = df[df['zone'].isin(self.dm.zones)]
         if df.empty:
             logger.warning("No incidents with valid zones after mapping. Returning default KPI DataFrame.")
@@ -883,8 +886,7 @@ class PredictiveAnalyticsEngine:
                 feature_df = kpi_df[features].fillna(0).astype(np.float32)
                 if feature_df.empty or len(self.dm.zones) == 0:
                     raise ValueError("Invalid input data for TCNN.")
-                X = feature_df.values.reshape(1, len(self.dm.zones), -1)
-                
+                X = feature_df.values.T.reshape(1, len(features), len(self.dm.zones))
                 with torch.no_grad():
                     preds = self.tcnn_model(torch.from_numpy(X)).numpy().flatten()
                 
@@ -1069,32 +1071,30 @@ class ReportGenerator:
                     ('GRID', (0, 0), (-1, -1), 1, '#000000')
                 ])
                 elements.append(forecast_table)
+                elements.append(Spacer(1, 12))
 
             doc.build(elements)
             buffer.seek(0)
             return buffer
         except Exception as e:
             logger.error(f"Failed to generate PDF report: {e}", exc_info=True)
-            st.error(f"Failed to generate PDF report: {e}")
-            buffer.seek(0)
-            return buffer
+            return io.BytesIO()
 
 class VisualizationSuite:
     @staticmethod
-    def plot_risk_heatmap(gdf: gpd.GeoDataFrame, kpi_df: pd.DataFrame) -> folium.Map:
-        if gdf.empty or kpi_df.empty:
+    def plot_risk_heatmap(dm: DataManager, kpi_df: pd.DataFrame) -> folium.Map:
+        if dm.zones_gdf.empty or kpi_df.empty:
             logger.warning("Empty GeoDataFrame or KPI DataFrame provided for heatmap.")
             return folium.Map(location=[32.53, -117.03], zoom_start=12)
         
         try:
-            center = gdf.unary_union.centroid
+            center = dm.zones_gdf.unary_union.centroid
             heatmap = folium.Map(location=[center.y, center.x], zoom_start=12)
             colors = {0.0: '#00FF00', 0.5: '#FFFF00', 1.0: '#FF0000'}
             
-            for idx, row in gdf.iterrows():
+            for idx, row in dm.zones_gdf.iterrows():
                 risk_score = kpi_df[kpi_df['Zone'] == idx]['Ensemble Risk Score'].iloc[0] if idx in kpi_df['Zone'].values else 0.0
                 risk_score = min(max(risk_score, 0.0), 1.0)
-                # Interpolate color
                 if risk_score < 0.5:
                     color = colors[0.0]
                 elif risk_score < 0.75:
@@ -1112,7 +1112,7 @@ class VisualizationSuite:
                     tooltip=idx
                 ).add_to(heatmap)
             
-            for amb in gdf.ambulances.values():
+            for amb in dm.ambulances.values():
                 if not isinstance(amb['location'], Point):
                     continue
                 folium.Marker(
@@ -1130,146 +1130,80 @@ class VisualizationSuite:
             logger.error(f"Failed to generate heatmap: {e}", exc_info=True)
             return folium.Map(location=[32.53, -117.03], zoom_start=12)
 
-    @staticmethod
-    def plot_risk_trends(forecast_df: pd.DataFrame) -> go.Figure:
-        if forecast_df.empty:
-            logger.warning("Empty forecast DataFrame provided for trends plot.")
-            return go.Figure()
-        
-        try:
-            fig = go.Figure()
-            for zone in forecast_df['Zone'].unique():
-                zone_data = forecast_df[forecast_df['Zone'] == zone]
-                fig.add_trace(go.Scatter(
-                    x=zone_data['Horizon (Hours)'],
-                    y=zone_data['Trauma Risk'],
-                    mode='lines+markers',
-                    name=f'{zone} - Trauma Risk'
-                ))
-                fig.add_trace(go.Scatter(
-                    x=zone_data['Horizon (Hours)'],
-                    y=zone_data['Disease Risk'],
-                    mode='lines+markers',
-                    name=f'{zone} - Disease Risk'
-                ))
-            
-            fig.update_layout(
-                title='Risk Forecast Trends by Zone',
-                xaxis_title='Forecast Horizon (Hours)',
-                yaxis_title='Risk Score',
-                template='plotly_dark',
-                hovermode='closest'
-            )
-            return fig
-        except Exception as e:
-            logger.error(f"Failed to generate trends plot: {e}", exc_info=True)
-            return go.Figure()
-
 def main():
-    st.title("RedShield AI: Phoenix v3.2.0")
+    config = load_config()
+    dm = get_data_manager(config)
+    pae = PredictiveAnalyticsEngine(dm, config)
+    advisor = StrategicAdvisor(dm, config)
     
-    try:
-        config = load_config()
-        dm = get_data_manager(config)
-        
-        with st.sidebar:
-            st.header("Environmental Factors")
-            is_holiday = st.checkbox("Is Holiday", value=False)
-            weather = st.selectbox("Weather", ["Clear", "Rain", "Fog"], index=0)
-            traffic_level = st.slider("Traffic Level", 0.5, 2.0, 1.0, step=0.1)
-            major_event = st.checkbox("Major Event", value=False)
-            population_density = st.number_input(
-                "Population Density", min_value=1000.0, max_value=1000000.0, value=100000.0, step=1000.0
-            )
-            air_quality_index = st.number_input(
-                "Air Quality Index", min_value=0.0, max_value=500.0, value=50.0, step=10.0
-            )
-            heatwave_alert = st.checkbox("Heatwave Alert", value=False)
-            
-            env_factors = EnvFactors(
-                is_holiday=is_holiday,
-                weather=weather,
-                traffic_level=traffic_level,
-                major_event=major_event,
-                population_density=population_density,
-                air_quality_index=air_quality_index,
-                heatwave_alert=heatwave_alert
-            )
-            
-            uploaded_file = st.file_uploader("Upload Historical Data (JSON)", type=['json'])
-            historical_data = []
-            if uploaded_file:
-                try:
-                    historical_data = json.load(uploaded_file)
-                    st.success("Historical data loaded successfully!")
-                except Exception as e:
-                    st.error(f"Failed to load historical data: {e}")
-                    historical_data = []
-            
-            if st.button("Download Sample History"):
-                sample_buffer = dm.generate_sample_history_file()
-                st.download_button(
-                    label="Download Sample Historical Data",
-                    data=sample_buffer,
-                    file_name="sample_history.json",
-                    mime="application/json"
-                )
-
-        current_incidents = dm.get_current_incidents(env_factors)
-        pae = PredictiveAnalyticsEngine(dm, config)
-        kpi_df = pae.generate_kpis(historical_data, env_factors, current_incidents)
-        forecast_df = pae.forecast_risk(kpi_df)
-        sa = StrategicAdvisor(dm, config)
-        recommendations = sa.recommend_allocations(kpi_df, forecast_df)
-        
-        st.header("Key Performance Indicators")
-        if not kpi_df.empty:
-            st.dataframe(
-                kpi_df.style.format("{:.3f}", subset=kpi_df.select_dtypes(include=[np.number]).columns),
-                use_container_width=True
-            )
-        else:
-            st.warning("No KPI data available.")
-        
-        st.header("Risk Forecast")
-        if not forecast_df.empty:
-            st.dataframe(
-                forecast_df.style.format("{:.3f}", subset=forecast_df.select_dtypes(include=[np.number]).columns),
-                use_container_width=True
-            )
-        else:
-            st.warning("No forecast data available.")
-        
-        st.header("Resource Allocation Recommendations")
-        if recommendations:
-            st.table(recommendations)
-        else:
-            st.write("No reallocation recommended at this time.")
-        
-        st.header("Risk Heatmap")
-        heatmap = VisualizationSuite.plot_risk_heatmap(dm.zones_gdf, kpi_df)
-        st_folium(heatmap, width=700, height=500, key="heatmap")
-        
-        st.header("Risk Trends")
-        trends = VisualizationSuite.plot_risk_trends(forecast_df)
-        st.plotly_chart(trends, use_container_width=True)
-        
-        st.header("Generate Report")
-        if st.button("Download PDF Report"):
-            pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, recommendations, forecast_df)
-            if pdf_buffer.getbuffer().nbytes > 0:
-                st.download_button(
-                    label="Download Report",
-                    data=pdf_buffer,
-                    file_name="redshield_phoenix_report.pdf",
-                    mime="application/pdf"
-                )
-            else:
-                st.error("Failed to generate PDF report. Please try again.")
+    st.sidebar.header("Environmental Factors")
+    is_holiday = st.sidebar.checkbox("Is Holiday?", value=False)
+    weather = st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=0)
+    traffic_level = st.sidebar.slider("Traffic Level", 0.0, 2.0, 1.0)
+    major_event = st.sidebar.checkbox("Major Event?", value=False)
+    population_density = st.sidebar.slider("Population Density (per sq km)", 1000, 100000, 50000)
+    air_quality_index = st.sidebar.slider("Air Quality Index", 0, 500, 50)
+    heatwave_alert = st.sidebar.checkbox("Heatwave Alert?", value=False)
     
-    except Exception as e:
-        logger.error(f"Application error: {e}", exc_info=True)
-        st.error(f"An unexpected error occurred: {e}. Please check the logs for details.")
+    env_factors = EnvFactors(
+        is_holiday=is_holiday,
+        weather=weather,
+        traffic_level=traffic_level,
+        major_event=major_event,
+        population_density=population_density,
+        air_quality_index=air_quality_index,
+        heatwave_alert=heatwave_alert
+    )
+    
+    current_incidents = dm.get_current_incidents(env_factors)
+    historical_data = []
+    uploaded_file = st.sidebar.file_uploader("Upload Historical Data (JSON)", type=['json'])
+    if uploaded_file:
+        try:
+            historical_data = json.load(uploaded_file)
+        except Exception as e:
+            st.error(f"Failed to load historical data: {e}")
+    else:
+        historical_data = json.load(dm.generate_sample_history_file())
+    
+    kpi_df = pae.generate_kpis(historical_data, env_factors, current_incidents)
+    forecast_df = pae.forecast_risk(kpi_df)
+    recommendations = advisor.recommend_allocations(kpi_df, forecast_df)
+    
+    st.header("Key Performance Indicators")
+    if not kpi_df.empty:
+        st.dataframe(kpi_df.round(3))
+    else:
+        st.warning("No KPI data available.")
+    
+    st.header("Risk Forecast")
+    if not forecast_df.empty:
+        st.dataframe(forecast_df.round(3))
+    else:
+        st.warning("No forecast data available.")
+    
+    st.header("Resource Allocation Recommendations")
+    if recommendations:
+        st.table(recommendations)
+    else:
+        st.info("No reallocation recommendations at this time.")
+    
+    st.header("Risk Heatmap")
+    heatmap = VisualizationSuite.plot_risk_heatmap(dm, kpi_df)
+    st_folium(heatmap, width=700, height=500, key="heatmap")
+    
+    st.header("Generate Report")
+    if st.button("Download PDF Report"):
+        pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, recommendations, forecast_df)
+        if pdf_buffer.getvalue():
+            st.download_button(
+                label="Download Report",
+                data=pdf_buffer,
+                file_name=f"RedShield_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+        else:
+            st.error("Failed to generate PDF report.")
 
 if __name__ == "__main__":
     main()
