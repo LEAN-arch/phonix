@@ -1192,7 +1192,7 @@ def main():
             weather="Clear",
             traffic_level=1.0,
             major_event=False,
-            population_density=10000,
+            population_density=10000.0,  # Changed to float to match min_value, max_value, step
             air_quality_index=50.0,
             heatwave_alert=False
         )
@@ -1215,10 +1215,10 @@ def main():
             )
             major_event = st.checkbox("Major Event", value=st.session_state.env_factors.major_event)
             pop_density = st.number_input(
-                "Population Density", min_value=1000.0, max_value=100000.0, value=st.session_state.env_factors.population_density, step=1000.0
+                "Population Density", min_value=1000.0, max_value=100000.0, value=float(st.session_state.env_factors.population_density), step=1000.0
             )
             air_quality = st.number_input(
-                "Air Quality Index (0-500)", min_value=0.0, max_value=500.0, value=st.session_state.env_factors.air_quality_index, step=10.0
+                "Air Quality Index (0-500)", min_value=0.0, max_value=500.0, value=float(st.session_state.env_factors.air_quality_index), step=10.0
             )
             heatwave = st.checkbox("Heatwave Alert", value=st.session_state.env_factors.heatwave_alert)
             
@@ -1303,4 +1303,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
