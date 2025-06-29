@@ -45,7 +45,7 @@ warnings.filterwarnings('ignore', category=FutureWarning)
 POPULATION_DENSITY_NORMALIZATION = 100000.0
 
 # --- L1: DATA STRUCTURES ---
-# --- ENHANCEMENT: The EnvFactors dataclass is updated to include new strategic factors ---
+# --- ENHANCEMENT: The EnvFactors dataclass is expanded to include new strategic factors ---
 @dataclass(frozen=True)
 class EnvFactors:
     # Existing factors
@@ -221,7 +221,18 @@ class PredictiveAnalyticsEngine:
 
     @st.cache_data
     def generate_kpis(_self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
-        kpi_cols = ['Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Information Value Index', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 'Ensemble Risk Score']
+        # --- EXPANSION: Add new advanced KPI columns ---
+        kpi_cols = [
+            'Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 
+            'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 
+            'Bayesian Confidence Score', 'Information Value Index', 'Response Time Estimate', 
+            'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 
+            'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 
+            'Ensemble Risk Score',
+            # New Advanced KPIs
+            'STGP_Risk', 'HMM_State_Risk', 'GNN_Structural_Risk', 'Game_Theory_Tension',
+            'Integrated_Risk_Score'
+        ]
         kpi_df = pd.DataFrame(0, index=_self.dm.zones, columns=kpi_cols, dtype=float)
 
         all_incidents = [inc for h in historical_data for inc in h.get('incidents', [])] + current_incidents
@@ -246,7 +257,7 @@ class PredictiveAnalyticsEngine:
         accident_counts = incidents_with_zones[incidents_with_zones['type'] == 'Trauma-Accident']['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         medical_counts = incidents_with_zones[incidents_with_zones['type'].isin(['Medical-Chronic', 'Medical-Acute'])]['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         
-        # --- ENHANCEMENT: Create dynamic multipliers from new strategic factors ---
+        # --- EXPANSION: Create dynamic multipliers from new strategic factors ---
         day_time_multiplier = {'Weekday': 1.0, 'Friday': 1.2, 'Weekend': 1.3}.get(env_factors.day_type, 1.0)
         day_time_multiplier *= {'Morning Rush': 1.1, 'Midday': 0.9, 'Evening Rush': 1.2, 'Night': 1.4}.get(env_factors.time_of_day, 1.0)
         
@@ -275,7 +286,7 @@ class PredictiveAnalyticsEngine:
         else:
             baseline_rate, kpi_df['Bayesian Confidence Score'] = 5.0, 0.5
 
-        # --- ENHANCEMENT: Apply new multipliers to the baseline rate ---
+        # --- EXPANSION: Apply new multipliers to the baseline rate ---
         baseline_rate *= day_time_multiplier * event_multiplier
         
         current_dist = incident_counts / (incident_counts.sum() + 1e-9)
@@ -293,7 +304,7 @@ class PredictiveAnalyticsEngine:
         hawkes_params = _self.model_params['hawkes_process']
         sir_params = _self.model_params['sir_model']
         
-        # --- ENHANCEMENT: Apply multipliers to sub-model scores ---
+        # --- EXPANSION: Apply multipliers to sub-model scores ---
         kpi_df['Violence Clustering Score'] = (violence_counts * hawkes_params['kappa'] * hawkes_params['violence_weight'] * violence_event_mod * police_activity_mod).clip(0, 1)
         kpi_df['Accident Clustering Score'] = (accident_counts * hawkes_params['kappa'] * hawkes_params['trauma_weight'] * effective_traffic).clip(0, 1)
         kpi_df['Medical Surge Score'] = (_self.dm.zones_gdf['population'].apply(lambda s: sir_params['beta'] * medical_counts.get(s, 0) / (s + 1e-9) - sir_params['gamma']) * medical_event_mod).clip(0, 1)
@@ -307,13 +318,28 @@ class PredictiveAnalyticsEngine:
         available_units = sum(1 for a in _self.dm.ambulances.values() if a['status'] == 'Disponible')
         needed_units = kpi_df['Expected Incident Volume'].sum()
         
-        # --- ENHANCEMENT: Apply system strain penalty to resource and response KPIs ---
+        # --- EXPANSION: Apply system strain penalty to resource and response KPIs ---
         kpi_df['Resource Adequacy Index'] = (available_units / (needed_units * system_strain_penalty + 1e-9)).clip(0, 1)
         kpi_df['Response Time Estimate'] = (10.0 * system_strain_penalty) * (1 + _self.model_params['response_time_penalty'] * (1-kpi_df['Resource Adequacy Index']))
         
         kpi_df['Ensemble Risk Score'] = _self.calculate_ensemble_risk_score(kpi_df, historical_data)
-        info_value = kpi_df['Ensemble Risk Score'].std()
-        kpi_df['Information Value Index'] = info_value
+        kpi_df['Information Value Index'] = kpi_df['Ensemble Risk Score'].std()
+
+        # --- EXPANSION: ADVANCED ANALYTICS LAYER ---
+        # Call the new orchestrator method to calculate and add advanced KPIs
+        advanced_kpis = _self._calculate_advanced_kpis(kpi_df, incidents_with_zones)
+        for key, value in advanced_kpis.items():
+            kpi_df[key] = value
+
+        # Combine base ensemble and advanced KPIs into a final, superior score
+        kpi_df['Integrated_Risk_Score'] = (
+            0.6 * kpi_df['Ensemble Risk Score'] +
+            0.1 * kpi_df['STGP_Risk'] +
+            0.1 * kpi_df['HMM_State_Risk'] +
+            0.1 * kpi_df['GNN_Structural_Risk'] +
+            0.1 * kpi_df['Game_Theory_Tension']
+        ).clip(0, 1)
+        # --- END OF ADVANCED ANALYTICS LAYER EXPANSION ---
 
         return kpi_df.fillna(0).reset_index().rename(columns={'index': 'Zone'})
         
@@ -358,6 +384,88 @@ class PredictiveAnalyticsEngine:
         
         return final_scores.clip(0, 1)
 
+    # --- EXPANSION: ADDITION OF ADVANCED ANALYTICS LAYER METHODS ---
+    
+    def _calculate_advanced_kpis(self, kpi_df: pd.DataFrame, incidents_with_zones: gpd.GeoDataFrame) -> Dict[str, pd.Series]:
+        """Orchestrator for calculating KPIs from advanced models."""
+        advanced_kpis = {
+            "STGP_Risk": self._calculate_stgp_risk(incidents_with_zones),
+            "HMM_State_Risk": self._calculate_hmm_risk(kpi_df),
+            "GNN_Structural_Risk": self._calculate_gnn_risk(),
+            "Game_Theory_Tension": self._calculate_game_theory_tension(kpi_df)
+        }
+        return advanced_kpis
+
+    def _calculate_stgp_risk(self, incidents_with_zones: gpd.GeoDataFrame) -> pd.Series:
+        """
+        Proxy for a Spatiotemporal Gaussian Process (ST-GP).
+        This simplified version calculates risk based on proximity to recent high-severity incidents.
+        A real ST-GP would provide a full covariance-based prediction with uncertainty.
+        """
+        stgp_risk = pd.Series(0.0, index=self.dm.zones)
+        if incidents_with_zones.empty:
+            return stgp_risk
+        
+        hotspots = incidents_with_zones[incidents_with_zones['triage'] == 'Red']
+        if hotspots.empty:
+            return stgp_risk
+
+        zone_centroids = self.dm.zones_gdf.geometry.centroid
+        for zone_name, centroid in zone_centroids.items():
+            distances = hotspots.geometry.distance(centroid)
+            length_scale = 0.05
+            risk_contribution = np.exp(-0.5 * (distances / length_scale)**2)
+            stgp_risk[zone_name] = risk_contribution.sum()
+        
+        max_risk = stgp_risk.max()
+        return (stgp_risk / (max_risk + 1e-9)).clip(0, 1)
+
+    def _calculate_hmm_risk(self, kpi_df: pd.DataFrame) -> pd.Series:
+        """
+        Proxy for a Hidden Markov Model (HMM).
+        A real HMM would infer a hidden state (e.g., 'Calm', 'Agitated', 'Critical').
+        This proxy uses thresholding on existing KPIs to simulate state transitions.
+        """
+        is_volatile = kpi_df['Chaos Sensitivity Score'] > 0.5
+        is_strained = kpi_df['Resource Adequacy Index'] < 0.5
+        
+        hmm_state = pd.Series(0, index=self.dm.zones)
+        hmm_state[is_volatile] = 1
+        hmm_state[is_strained] = 1
+        hmm_state[is_volatile & is_strained] = 2
+        
+        return (hmm_state / 2.0).clip(0, 1)
+
+    def _calculate_gnn_risk(self) -> pd.Series:
+        """
+        Proxy for a Graph Neural Network (GNN).
+        This proxy uses pre-computed graph centrality as a stand-in for structural importance,
+        representing a zone's intrinsic vulnerability due to its position in the network.
+        """
+        if not hasattr(self, '_centrality'):
+            # Calculate and cache centrality as it's static
+            self._centrality = pd.Series(nx.betweenness_centrality(self.dm.road_graph), name="centrality")
+        
+        gnn_risk = self._centrality.copy()
+        max_risk = gnn_risk.max()
+        return (gnn_risk / (max_risk + 1e-9)).clip(0, 1)
+
+    def _calculate_game_theory_tension(self, kpi_df: pd.DataFrame) -> pd.Series:
+        """
+        Proxy for a Game Theory model.
+        This models the "tension" for resources between competing high-risk zones.
+        """
+        expected_incidents = kpi_df['Expected Incident Volume']
+        total_expected = expected_incidents.sum()
+        
+        if total_expected == 0:
+            return pd.Series(0.0, index=kpi_df.index)
+            
+        tension = expected_incidents / total_expected
+        return tension.clip(0, 1)
+
+    # --- END OF ADVANCED ANALYTICS LAYER ADDITION ---
+
     def generate_forecast(self, historical_data: List[Dict], env_factors: EnvFactors, kpi_df: pd.DataFrame) -> pd.DataFrame:
         if kpi_df.empty: return pd.DataFrame()
         forecast_data = []
@@ -365,12 +473,14 @@ class PredictiveAnalyticsEngine:
         for _, row in kpi_df.iterrows():
             for horizon in self.config['forecast_horizons_hours']:
                 decay = decay_rates.get(str(horizon), 0.5)
+                # --- EXPANSION: Use the most advanced score for forecasting ---
+                combined_risk_score = row.get('Integrated_Risk_Score', row['Ensemble Risk Score'])
                 forecast_data.append({
                     'Zone': row['Zone'], 'Horizon (Hours)': horizon,
                     'Violence Risk': row['Violence Clustering Score'] * decay,
                     'Accident Risk': row['Accident Clustering Score'] * decay,
                     'Medical Risk': row['Medical Surge Score'] * decay,
-                    'Combined Risk': row['Ensemble Risk Score'] * decay
+                    'Combined Risk': combined_risk_score * decay
                 })
         
         forecast_df = pd.DataFrame(forecast_data)
@@ -385,19 +495,20 @@ class PredictiveAnalyticsEngine:
         return self.forecast_df
 
     def generate_allocation_recommendations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> Dict[str, int]:
-        if kpi_df.empty or forecast_df.empty: return {zone: 0 for zone in self.dm.zones}
+        if kpi_df.empty:
+            return {zone: 0 for zone in self.dm.zones}
         available_units = sum(1 for a in self.dm.ambulances.values() if a['status'] == 'Disponible')
         if available_units == 0: return {zone: 0 for zone in self.dm.zones}
-        weights = self.model_params['allocation_forecast_weights']
-        risk_scores = pd.Series(0.0, index=self.dm.zones)
-        for horizon, weight in weights.items():
-            horizon_risk = forecast_df[forecast_df['Horizon (Hours)'] == float(horizon)].set_index('Zone')['Combined Risk']
-            risk_scores += horizon_risk.reindex(self.dm.zones, fill_value=0) * weight
+        
+        # --- EXPANSION: Base allocation on the most sophisticated risk score available ---
+        risk_scores = kpi_df.set_index('Zone').get('Integrated_Risk_Score', kpi_df.set_index('Zone')['Ensemble Risk Score'])
+        
         total_risk = risk_scores.sum()
         if total_risk == 0:
             allocations = {zone: available_units // len(self.dm.zones) for zone in self.dm.zones}
             allocations[self.dm.zones[0]] += available_units % len(self.dm.zones)
             return allocations
+            
         allocations = (available_units * risk_scores / total_risk).round().astype(int).to_dict()
         allocated_units = sum(allocations.values())
         diff = available_units - allocated_units
