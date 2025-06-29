@@ -629,7 +629,7 @@ class PredictiveAnalyticsEngine:
         return scores
 
     @st.cache_data
-    def generate_kpis(self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
+    def generate_kpis(_self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
         kpi_data = [{
             'Zone': zone,
             'Incident Probability': 0.0,
@@ -648,7 +648,7 @@ class PredictiveAnalyticsEngine:
             'Accident Clustering Score': 0.0,
             'Medical Surge Score': 0.0,
             'Ensemble Risk Score': 0.0
-        } for zone in self.dm.zones]
+        } for zone in _self.dm.zones]
 
         if not historical_data and not current_incidents:
             logger.warning("No historical or current incident data provided. Returning default KPI DataFrame.")
@@ -675,7 +675,7 @@ class PredictiveAnalyticsEngine:
             if not isinstance(location, dict) or 'lat' not in location or 'lon' not in location:
                 return None
             point = Point(location['lon'], location['lat'])
-            for zone, row in self.dm.zones_gdf.iterrows():
+            for zone, row in _self.dm.zones_gdf.iterrows():
                 if row['geometry'].contains(point):
                     return zone
             return None
@@ -691,14 +691,14 @@ class PredictiveAnalyticsEngine:
                 logger.error("No zone or location data found in incidents. Expected 'location' or one of: %s", possible_zone_columns)
                 return pd.DataFrame(kpi_data)
 
-        df = df[df['zone'].isin(self.dm.zones)]
+        df = df[df['zone'].isin(_self.dm.zones)]
         if df.empty:
             logger.warning("No incidents with valid zones after mapping. Returning default KPI DataFrame.")
             return pd.DataFrame(kpi_data)
 
-        if self.bn_model and PGMPY_AVAILABLE:
+        if _self.bn_model and PGMPY_AVAILABLE:
             try:
-                inference = VariableElimination(self.bn_model)
+                inference = VariableElimination(_self.bn_model)
                 evidence = {
                     'Holiday': 1 if env_factors.is_holiday else 0,
                     'Weather': 1 if env_factors.weather.lower() != 'clear' else 0,
@@ -724,35 +724,35 @@ class PredictiveAnalyticsEngine:
         disease_counts = df[df['type'].isin(['Medical-Chronic', 'Medical-Acute'])]['zone'].value_counts()
         
         past_incidents = sum([h.get('incidents', []) for h in historical_data if isinstance(h, dict)], [])
-        violence_intensity = self._calculate_violence_intensity(past_incidents, env_factors, self.config['model_params']['hawkes_process'])
-        accident_intensity = self._calculate_accident_intensity(past_incidents, env_factors, self.config['model_params']['hawkes_process'])
-        medical_intensity = self._calculate_medical_intensity(env_factors, self.config['model_params']['sir_model'])
+        violence_intensity = _self._calculate_violence_intensity(past_incidents, env_factors, _self.config['model_params']['hawkes_process'])
+        accident_intensity = _self._calculate_accident_intensity(past_incidents, env_factors, _self.config['model_params']['hawkes_process'])
+        medical_intensity = _self._calculate_medical_intensity(env_factors, _self.config['model_params']['sir_model'])
         trauma_intensity = violence_intensity + accident_intensity
         disease_intensity = medical_intensity
         
         with np.errstate(divide='ignore', invalid='ignore'):
-            current_dist = (incident_counts / (incident_counts.sum() + 1e-9)).reindex(self.dm.zones, fill_value=0)
-            prior_dist = pd.Series(self.config['data']['distributions']['zone']).reindex(self.dm.zones, fill_value=1e-9)
+            current_dist = (incident_counts / (incident_counts.sum() + 1e-9)).reindex(_self.dm.zones, fill_value=0)
+            prior_dist = pd.Series(_self.config['data']['distributions']['zone']).reindex(_self.dm.zones, fill_value=1e-9)
             kl_divergence = np.sum(current_dist * np.log(current_dist.replace(0, 1e-9) / prior_dist))
             shannon_entropy = -np.sum(current_dist * np.log2(current_dist.replace(0, 1e-9)))
             kl_divergence = 0.0 if not np.isfinite(kl_divergence) else kl_divergence
             shannon_entropy = 0.0 if not np.isfinite(shannon_entropy) else shannon_entropy
 
-        lyapunov_exponent = self._calculate_lyapunov_exponent(historical_data, current_dist)
-        base_probs = self._calculate_base_probabilities(baseline_rate, trauma_intensity + disease_intensity, prior_dist)
-        spillover_risk = self.config['model_params']['laplacian_diffusion_factor'] * (self.dm.laplacian_matrix @ pd.Series(base_probs, index=self.dm.zones).values)
-        response_times = self._calculate_response_times(current_incidents)
-        trauma_cluster_scores = self._calculate_trauma_cluster_scores(trauma_counts, self.config['model_params']['hawkes_process'])
-        disease_surge_scores = self._calculate_disease_surge_scores(disease_counts, self.config['model_params']['sir_model'])
-        violence_cluster_scores = self._calculate_violence_cluster_scores(violence_counts, self.config['model_params']['hawkes_process'])
-        accident_cluster_scores = self._calculate_accident_cluster_scores(accident_counts, self.config['model_params']['hawkes_process'])
-        medical_surge_scores = self._calculate_medical_surge_scores(medical_counts, self.config['model_params']['sir_model'])
+        lyapunov_exponent = _self._calculate_lyapunov_exponent(historical_data, current_dist)
+        base_probs = _self._calculate_base_probabilities(baseline_rate, trauma_intensity + disease_intensity, prior_dist)
+        spillover_risk = _self.config['model_params']['laplacian_diffusion_factor'] * (_self.dm.laplacian_matrix @ pd.Series(base_probs, index=_self.dm.zones).values)
+        response_times = _self._calculate_response_times(current_incidents)
+        trauma_cluster_scores = _self._calculate_trauma_cluster_scores(trauma_counts, _self.config['model_params']['hawkes_process'])
+        disease_surge_scores = _self._calculate_disease_surge_scores(disease_counts, _self.config['model_params']['sir_model'])
+        violence_cluster_scores = _self._calculate_violence_cluster_scores(violence_counts, _self.config['model_params']['hawkes_process'])
+        accident_cluster_scores = _self._calculate_accident_cluster_scores(accident_counts, _self.config['model_params']['hawkes_process'])
+        medical_surge_scores = _self._calculate_medical_surge_scores(medical_counts, _self.config['model_params']['sir_model'])
         
-        trauma_dist = (trauma_counts / (trauma_counts.sum() + 1e-9)).reindex(self.dm.zones, fill_value=0)
-        disease_dist = (disease_counts / (disease_counts.sum() + 1e-9)).reindex(self.dm.zones, fill_value=0)
-        correlation_score = self._model_event_correlations(trauma_dist, disease_dist)
+        trauma_dist = (trauma_counts / (trauma_counts.sum() + 1e-9)).reindex(_self.dm.zones, fill_value=0)
+        disease_dist = (disease_counts / (disease_counts.sum() + 1e-9)).reindex(_self.dm.zones, fill_value=0)
+        correlation_score = _self._model_event_correlations(trauma_dist, disease_dist)
 
-        available_units = sum(1 for a in self.dm.ambulances.values() if a['status'] == 'Disponible')
+        available_units = sum(1 for a in _self.dm.ambulances.values() if a['status'] == 'Disponible')
         kpi_data = [{
             'Zone': zone,
             'Incident Probability': base_probs.get(zone, 0),
@@ -760,7 +760,7 @@ class PredictiveAnalyticsEngine:
             'Risk Entropy': shannon_entropy,
             'Anomaly Score': kl_divergence,
             'Spatial Spillover Risk': spillover_risk[i],
-            'Resource Adequacy Index': available_units / (base_probs.get(zone, 1e-9) * len(self.dm.zones) + 1e-9),
+            'Resource Adequacy Index': available_units / (base_probs.get(zone, 1e-9) * len(_self.dm.zones) + 1e-9),
             'Chaos Sensitivity Score': lyapunov_exponent,
             'Bayesian Confidence Score': bayesian_confidence,
             'Response Time Estimate': response_times.get(zone, 10.0),
@@ -770,10 +770,10 @@ class PredictiveAnalyticsEngine:
             'Violence Clustering Score': violence_cluster_scores.get(zone, 0.0),
             'Accident Clustering Score': accident_cluster_scores.get(zone, 0.0),
             'Medical Surge Score': medical_surge_scores.get(zone, 0.0)
-        } for i, zone in enumerate(self.dm.zones)]
+        } for i, zone in enumerate(_self.dm.zones)]
         
         kpi_df = pd.DataFrame(kpi_data)
-        ensemble_scores = self.calculate_ensemble_risk_score(kpi_df, historical_data)
+        ensemble_scores = _self.calculate_ensemble_risk_score(kpi_df, historical_data)
         kpi_df['Ensemble Risk Score'] = kpi_df['Zone'].map(ensemble_scores)
         return kpi_df
 
