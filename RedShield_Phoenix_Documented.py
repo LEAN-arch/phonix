@@ -153,6 +153,7 @@ def get_default_config() -> Dict[str, any]:
                     "polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]],
                     "prior_risk": 0.7,
                     "population": 50000,
+br
                     "crime_rate_modifier": 1.2
                 },
                 "Otay": {
@@ -425,7 +426,9 @@ class DataManager:
         incidents = []
         for i in range(num_incidents):
             for _ in range(10):  # Retry up to 10 times to find a valid point
-                point = Point(np.random.uniform(bounds[0], bounds[2]), np.random.uniform(bounds[1], bounds[3]))
+                lon = np.random.uniform(bounds[0], bounds[2])
+                lat = np.random.uniform(bounds[1], bounds[3])
+                point = Point(lon, lat)
                 if city_boundary.contains(point):
                     incidents.append({
                         'id': f"SYN-{i}",
@@ -437,7 +440,7 @@ class DataManager:
                             list(self.data_config['distributions']['triage'].keys()),
                             p=list(self.data_config['distributions']['triage'].values())
                         ),
-                        'location': point,
+                        'location': {'lat': lat, 'lon': lon},
                         'timestamp': datetime.utcnow().isoformat()
                     })
                     break
@@ -458,7 +461,9 @@ class DataManager:
                 num_zone_incidents = np.random.randint(1, 5)
                 for j in range(num_zone_incidents):
                     for _ in range(10):  # Retry to ensure point is within bounds
-                        point = Point(np.random.uniform(bounds[0], bounds[2]), np.random.uniform(bounds[1], bounds[3]))
+                        lon = np.random.uniform(bounds[0], bounds[2])
+                        lat = np.random.uniform(bounds[1], bounds[3])
+                        point = Point(lon, lat)
                         if city_boundary.contains(point):
                             incidents.append({
                                 'id': f"SAMPLE-{i}-{j}",
@@ -471,7 +476,7 @@ class DataManager:
                                     p=list(self.data_config['distributions']['triage'].values())
                                 ),
                                 'zone': zone,
-                                'location': point,
+                                'location': {'lat': lat, 'lon': lon},
                                 'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()
                             })
                             break
