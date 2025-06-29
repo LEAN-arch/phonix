@@ -110,6 +110,17 @@ class EnvFactors:
     air_quality_index: float
     heatwave_alert: bool
 
+    def __hash__(self):
+        return hash((
+            self.is_holiday,
+            self.weather,
+            self.traffic_level,
+            self.major_event,
+            self.population_density,
+            self.air_quality_index,
+            self.heatwave_alert
+        ))
+
 @dataclass(frozen=True)
 class ZoneAttributes:
     name: str
@@ -205,7 +216,7 @@ def get_default_config() -> Dict[str, any]:
             },
             "chaos_amplifier": 1.5,
             "fallback_forecast_decay_rates": {
-                "0.5": 0.95, "1": 0.9, "3": 0.8, "6": 0.7, "12": 0.6,
+                "0.5": 4, "1": 0.9, "3": 0.8, "6": 0.7, "12": 0.6,
                 "24": 0.5, "72": 0.3, "144": 0.2
             },
             "allocation_forecast_weights": {
@@ -390,7 +401,7 @@ class DataManager:
                 lat, lon = float(loc['lat']), float(loc['lon'])
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     raise ValueError("Coordinates out of bounds.")
-                inc['location'] = Point(lon, lat)
+                inc['location'] = {'lat': lat, 'lon': lon}  # Keep as dict for hashability
                 inc['type'] = inc['type'] if inc['type'] in incident_types else 'Medical-Chronic'
                 inc['triage'] = inc['triage'] if inc['triage'] in triage_types else 'Green'
                 valid_incidents.append(inc)
@@ -660,9 +671,10 @@ class PredictiveAnalyticsEngine:
 
         df = pd.DataFrame(all_incidents)
         
-        def get_zone(point):
-            if not isinstance(point, Point):
+        def get_zone(location):
+            if not isinstance(location, dict) or 'lat' not in location or 'lon' not in location:
                 return None
+            point = Point(location['lon'], location['lat'])
             for zone, row in self.dm.zones_gdf.iterrows():
                 if row['geometry'].contains(point):
                     return zone
@@ -842,7 +854,12 @@ class PredictiveAnalyticsEngine:
             ]
             if not available_ambulances:
                 response_times[zone] *= penalty
-            zone_incidents = [inc for inc in current_incidents if isinstance(inc, dict) and self.dm.zones_gdf.loc[zone, 'geometry'].contains(inc.get('location', Point(0, 0)))]
+            zone_incidents = [
+                inc for inc in current_incidents
+                if isinstance(inc, dict) and 'location' in inc and isinstance(inc['location'], dict)
+                and 'lat' in inc['location'] and 'lon' in inc['location']
+                and self.dm.zones_gdf.loc[zone, 'geometry'].contains(Point(inc['location']['lon'], inc['location']['lat']))
+            ]
             if zone_incidents:
                 response_times[zone] *= (1 + 0.5 * len(zone_incidents))
         return response_times
