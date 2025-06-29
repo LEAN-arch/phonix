@@ -40,7 +40,7 @@ except ImportError:
         class AdaptiveAvgPool1d: pass
         class Flatten: pass
 
-class TCNN(nn.Module if TORCH_AVAILABLE else object):
+class TC multiplexingNN(nn.Module if TORCH_AVAILABLE else object):
     def __init__(self, input_size: int, output_size: int, channels: List[int], kernel_size: int, dropout: float):
         if not TORCH_AVAILABLE:
             super().__init__()
