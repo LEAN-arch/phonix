@@ -164,7 +164,6 @@ class DataManager:
         return incidents
     
     def generate_sample_history_file(self) -> io.BytesIO:
-        # Implementation is unchanged from original file
         buffer = io.BytesIO()
         buffer.write(json.dumps([{'incidents': self._generate_synthetic_incidents(EnvFactors(False,"Clear",1.0,False,50000,50,False)), 'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()} for i in range(3)], indent=2).encode('utf-8'))
         buffer.seek(0)
@@ -218,7 +217,20 @@ class PredictiveAnalyticsEngine:
         incident_df = pd.DataFrame(all_incidents)
         locations = [Point(loc['lon'], loc['lat']) for loc in incident_df['location']]
         incident_gdf = gpd.GeoDataFrame(incident_df, geometry=locations, crs="EPSG:4326")
-        incidents_with_zones = gpd.sjoin(incident_gdf, _self.dm.zones_gdf, how="inner", predicate="within").rename(columns={'index_right': 'Zone'})
+        
+        # --- BUG FIX STARTS HERE ---
+        # The sjoin creates a column named 'name' because the zones_gdf index is named 'name'.
+        # We rename this column to 'Zone' for clarity.
+        # We also drop the unnecessary columns from zones_gdf that are merged in.
+        incidents_with_zones_raw = gpd.sjoin(incident_gdf, _self.dm.zones_gdf, how="inner", predicate="within")
+        
+        # Keep only original columns plus the zone name, drop duplicates if incident is on a border
+        cols_to_keep = list(incident_gdf.columns) + ['name']
+        incidents_with_zones = incidents_with_zones_raw[cols_to_keep].copy()
+        incidents_with_zones.rename(columns={'name': 'Zone'}, inplace=True)
+        incidents_with_zones.drop_duplicates(subset=['id'], keep='first', inplace=True)
+        # --- BUG FIX ENDS HERE ---
+
         if incidents_with_zones.empty: return kpi_df.reset_index().rename(columns={'index': 'Zone'})
 
         # --- 2. Vectorized KPI Calculations ---
@@ -271,7 +283,6 @@ class PredictiveAnalyticsEngine:
         kpi_df['Expected Incident Volume'] = incident_counts
         available_units = sum(1 for a in _self.dm.ambulances.values() if a['status'] == 'Disponible')
         kpi_df['Resource Adequacy Index'] = (available_units / (incident_counts.sum() + 1e-9)).clip(0, 1)
-        # Simplified response time based on available units in zone
         kpi_df['Response Time Estimate'] = 10.0 * (1 + _self.model_params['response_time_penalty'] * (1-kpi_df['Resource Adequacy Index']))
 
         # Ensemble Score
@@ -284,7 +295,6 @@ class PredictiveAnalyticsEngine:
         try:
             series = pd.Series([len(h.get('incidents', [])) for h in historical_data])
             if len(series) < 10 or series.std() == 0: return 0.0
-            # Simplified calculation for speed and stability
             return np.log(series.diff().abs().mean() + 1)
         except Exception: return 0.0
 
@@ -303,11 +313,10 @@ class PredictiveAnalyticsEngine:
         for weight_key, metric in component_map.items():
             if metric in kpi_df.columns and _self.method_weights.get(weight_key, 0) > 0:
                 col = kpi_df[metric]
-                if metric == 'Resource Adequacy Index': col = 1 - col # Higher adequacy is lower risk
+                if metric == 'Resource Adequacy Index': col = 1 - col
                 if metric == 'Chaos Sensitivity Score': col *= chaos_amp
                 scores += normalize(col) * _self.method_weights[weight_key]
         
-        # TCNN contribution (if available)
         if _self.method_weights.get('tcnn', 0) > 0 and not _self.forecast_df.empty:
             tcnn_risk = _self.forecast_df[_self.forecast_df['Horizon (Hours)'] == 3].set_index('Zone')[['Violence Risk', 'Accident Risk', 'Medical Risk']].mean(axis=1)
             scores += normalize(tcnn_risk.reindex(_self.dm.zones, fill_value=0)) * _self.method_weights['tcnn']
@@ -316,10 +325,8 @@ class PredictiveAnalyticsEngine:
 
     def generate_forecast(self, historical_data: List[Dict], env_factors: EnvFactors, kpi_df: pd.DataFrame) -> pd.DataFrame:
         if kpi_df.empty: return pd.DataFrame()
-
         forecast_data = []
         decay_rates = self.model_params['fallback_forecast_decay_rates']
-        
         for _, row in kpi_df.iterrows():
             for horizon in self.config['forecast_horizons_hours']:
                 decay = decay_rates.get(str(horizon), 0.5)
@@ -335,31 +342,23 @@ class PredictiveAnalyticsEngine:
 
     def generate_allocation_recommendations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> Dict[str, int]:
         if kpi_df.empty or forecast_df.empty: return {zone: 0 for zone in self.dm.zones}
-
         available_units = sum(1 for a in self.dm.ambulances.values() if a['status'] == 'Disponible')
         if available_units == 0: return {zone: 0 for zone in self.dm.zones}
-        
         weights = self.model_params['allocation_forecast_weights']
         risk_scores = pd.Series(0.0, index=self.dm.zones)
-        
         for horizon, weight in weights.items():
             horizon_risk = forecast_df[forecast_df['Horizon (Hours)'] == float(horizon)].set_index('Zone')['Combined Risk']
             risk_scores += horizon_risk.reindex(self.dm.zones, fill_value=0) * weight
-        
         total_risk = risk_scores.sum()
         if total_risk == 0:
             allocations = {zone: available_units // len(self.dm.zones) for zone in self.dm.zones}
             allocations[self.dm.zones[0]] += available_units % len(self.dm.zones)
             return allocations
-
         allocations = (available_units * risk_scores / total_risk).round().astype(int).to_dict()
-        
-        # Adjust for rounding errors to match available units
         allocated_units = sum(allocations.values())
         diff = available_units - allocated_units
         if diff != 0:
             risk_order = risk_scores.sort_values(ascending=(diff < 0)).index
             for i in range(abs(diff)):
                 allocations[risk_order[i % len(risk_order)]] += np.sign(diff)
-
         return allocations
