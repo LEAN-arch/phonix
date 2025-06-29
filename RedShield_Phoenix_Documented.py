@@ -22,8 +22,50 @@ from scipy.stats import norm
 import folium
 from streamlit_folium import st_folium
 
-# --- Project-specific imports ---
-from models import TCNN, TORCH_AVAILABLE
+# --- TCNN Model Definition ---
+try:
+    import torch
+    import torch.nn as nn
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    class nn:
+        class Module:
+            pass
+        class Conv1d:
+            pass
+        class Dropout:
+            pass
+        class Linear:
+            pass
+        class ReLU:
+            pass
+        class AdaptiveAvgPool1d:
+            pass
+
+class TCNN(nn.Module if TORCH_AVAILABLE else object):
+    def __init__(self, input_size, output_size, channels, kernel_size, dropout):
+        if not TORCH_AVAILABLE:
+            return
+        super(TCNN, self).__init__()
+        layers = []
+        in_channels = input_size
+        for out_channels in channels:
+            layers.extend([
+                nn.Conv1d(in_channels, out_channels, kernel_size, padding='same'),
+                nn.ReLU(),
+                nn.Dropout(dropout)
+            ])
+            in_channels = out_channels
+        layers.append(nn.AdaptiveAvgPool1d(1))
+        layers.append(nn.Flatten())
+        layers.append(nn.Linear(in_channels, output_size))
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        if not TORCH_AVAILABLE:
+            return torch.zeros(1, 24)  # Dummy output matching expected shape
+        return self.model(x)
 
 # --- Optional dependency check for pgmpy ---
 try:
@@ -870,7 +912,7 @@ class StrategicAdvisor:
                     available_ambulances.remove(closest_amb)
 
         return recommendations[:2]
-class ReportGenerator:
+        class ReportGenerator:
     @staticmethod
     def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
         buffer = io.BytesIO()
@@ -882,6 +924,7 @@ class ReportGenerator:
             Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']),
             Spacer(1, 12)
         ]
+        
         if not kpi_df.empty:
             elements.append(Paragraph("Key Performance Indicators", styles['Heading2']))
             kpi_data = [kpi_df.columns.tolist()] + kpi_df.round(3).values.tolist()
@@ -889,377 +932,196 @@ class ReportGenerator:
             kpi_table.setStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
                 ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
-                ('GRID', (0, 0), (-1, -1), 1, '#000000'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8)
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), '#ECF0F1'),
+                ('TEXTCOLOR', (0, 1), (-1, -1), '#000000'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, '#000000')
             ])
             elements.append(kpi_table)
             elements.append(Spacer(1, 12))
+
         if recommendations:
             elements.append(Paragraph("Resource Allocation Recommendations", styles['Heading2']))
-            for rec in recommendations:
-                elements.append(Paragraph(
-                    f"Move {rec['unit']} from {rec['from']} to {rec['to']}. Reason: {rec['reason']}",
-                    styles['Normal']
-                ))
+            recommendation_data = [['Unit', 'From', 'To', 'Reason']] + [
+                [rec['unit'], rec['from'], rec['to'], rec['reason']] for rec in recommendations
+            ]
+            rec_table = Table(recommendation_data)
+            rec_table.setStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
+                ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), '#ECF0F1'),
+                ('TEXTCOLOR', (0, 1), (-1, -1), '#000000'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, '#000000')
+            ])
+            elements.append(rec_table)
             elements.append(Spacer(1, 12))
+
         if not forecast_df.empty:
-            elements.append(Paragraph("Risk Forecast (Multiple Horizons)", styles['Heading2']))
+            elements.append(Paragraph("Risk Forecast", styles['Heading2']))
             forecast_data = [forecast_df.columns.tolist()] + forecast_df.round(3).values.tolist()
             forecast_table = Table(forecast_data)
             forecast_table.setStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
                 ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
-                ('GRID', (0, 0), (-1, -1), 1, '#000000'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8)
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), '#ECF0F1'),
+                ('TEXTCOLOR', (0, 1), (-1, -1), '#000000'),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, '#000000')
             ])
             elements.append(forecast_table)
+
         doc.build(elements)
         buffer.seek(0)
         return buffer
 
 class VisualizationSuite:
     @staticmethod
-    def plot_kpi_dashboard(kpi_df: pd.DataFrame) -> go.Figure:
-        if kpi_df.empty:
-            return go.Figure().add_annotation(
-                text="No KPI data available. Run a predictive cycle.",
-                showarrow=False,
-                font=dict(size=16, color="#2C3E50")
-            )
-        def color_scaler(val: float, col_data: pd.Series, high_is_bad: bool = True) -> str:
-            norm_val = (val - col_data.min()) / (col_data.max() - col_data.min() + 1e-9)
-            r, g = (int(255 * norm_val), int(255 * (1 - norm_val))) if high_is_bad else (int(255 * (1 - norm_val)), int(255 * norm_val))
-            return f'rgba({r}, {g}, 0, 0.7)'
+    def plot_risk_heatmap(gdf: gpd.GeoDataFrame, kpi_df: pd.DataFrame) -> folium.Map:
+        if gdf.empty or kpi_df.empty:
+            return folium.Map(location=[32.53, -117.03], zoom_start=12)
         
-        display_df = kpi_df.round(3)
-        colors = {'Zone': [['#2C3E50'] * len(display_df)]}
-        font_colors = {'Zone': [['white'] * len(display_df)]}
-        for col in display_df.columns[1:]:
-            high_is_bad = 'Confidence' not in col and 'Adequacy' not in col
-            colors[col] = [[color_scaler(v, display_df[col], high_is_bad) for v in display_df[col]]]
-            font_colors[col] = [['black'] * len(display_df)]
+        center = gdf.unary_union.centroid
+        heatmap = folium.Map(location=[center.y, center.x], zoom_start=12)
+        colors = {0.0: '#00FF00', 0.5: '#FFFF00', 1.0: '#FF0000'}
         
-        fig = go.Figure(data=[go.Table(
-            header=dict(
-                values=[f"<b>{c}</b>" for c in display_df.columns],
-                fill_color='#2C3E50',
-                align='center',
-                font=dict(color='white', size=14),
-                line_color='white',
-                height=40
-            ),
-            cells=dict(
-                values=[display_df[k] for k in display_df.columns],
-                fill_color=np.concatenate(list(colors.values()), axis=0).T,
-                align='center',
-                font=dict(color=np.concatenate(list(font_colors.values()), axis=0).T, size=12),
-                height=30,
-                line_color='white'
-            )
-        )])
-        fig.update_layout(
-            title_text="<b>Real-Time System Insights: KPI Dashboard</b>",
-            title_font=dict(size=20, color='#2C3E50'),
-            margin=dict(l=10, r=10, t=50, b=10),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
-        )
-        return fig
-
-    @staticmethod
-    def plot_radar_chart(kpi_df: pd.DataFrame) -> go.Figure:
-        if kpi_df.empty:
-            return go.Figure().add_annotation(
-                text="No KPI data available for radar chart.",
-                showarrow=False,
-                font=dict(size=16, color="#2C3E50")
-            )
+        for idx, row in gdf.iterrows():
+            risk_score = kpi_df[kpi_df['Zone'] == idx]['Ensemble Risk Score'].iloc[0] if idx in kpi_df['Zone'].values else 0
+            color = colors.get(min(risk_score, 1.0), '#00FF00')
+            folium.GeoJson(
+                row['geometry'],
+                style_function=lambda x, color=color: {
+                    'fillColor': color,
+                    'color': '#000000',
+                    'weight': 2,
+                    'fillOpacity': 0.5
+                }
+            ).add_to(heatmap)
         
-        metrics = [
-            'Ensemble Risk Score',
-            'Violence Clustering Score',
-            'Accident Clustering Score',
-            'Medical Surge Score',
-            'Response Time Estimate'
-        ]
-        fig = go.Figure()
-        
-        for zone in kpi_df['Zone']:
-            values = kpi_df[kpi_df['Zone'] == zone][metrics].values.flatten()
-            values = (values - kpi_df[metrics].min().values) / (kpi_df[metrics].max().values - kpi_df[metrics].min().values + 1e-9)
-            fig.add_trace(go.Scatterpolar(
-                r=values,
-                theta=metrics,
-                fill='toself',
-                name=zone,
-                line=dict(width=2),
-                opacity=0.7
-            ))
-        
-        fig.update_layout(
-            polar=dict(
-                radialaxis=dict(visible=True, range=[0, 1]),
-                angularaxis=dict(showline=True, linewidth=2, gridcolor="rgba(0,0,0,0.2)")
-            ),
-            showlegend=True,
-            title_text="<b>Zone Risk Profile Comparison</b>",
-            title_font=dict(size=20, color='#2C3E50'),
-            margin=dict(l=50, r=50, t=80, b=50),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-        )
-        return fig
-
-    @staticmethod
-    def plot_risk_breakdown(kpi_df: pd.DataFrame) -> go.Figure:
-        if kpi_df.empty:
-            return go.Figure().add_annotation(
-                text="No KPI data available for risk breakdown.",
-                showarrow=False,
-                font=dict(size=16, color="#2C3E50")
-            )
-        
-        fig = go.Figure(data=[
-            go.Bar(
-                name='Violence Risk',
-                x=kpi_df['Zone'],
-                y=kpi_df['Violence Clustering Score'],
-                marker_color='#E74C3C'
-            ),
-            go.Bar(
-                name='Accident Risk',
-                x=kpi_df['Zone'],
-                y=kpi_df['Accident Clustering Score'],
-                marker_color='#F1C40F'
-            ),
-            go.Bar(
-                name='Medical Risk',
-                x=kpi_df['Zone'],
-                y=kpi_df['Medical Surge Score'],
-                marker_color='#3498DB'
-            )
-        ])
-        
-        fig.update_layout(
-            barmode='stack',
-            title_text="<b>Risk Breakdown by Incident Type</b>",
-            title_font=dict(size=20, color='#2C3E50'),
-            xaxis_title="Zone",
-            yaxis_title="Risk Score",
-            xaxis=dict(tickfont=dict(size=12)),
-            yaxis=dict(tickfont=dict(size=12)),
-            margin=dict(l=50, r=50, t=80, b=50),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-        )
-        return fig
-
-    @staticmethod
-    def plot_risk_heatmap(kpi_df: pd.DataFrame, dm: DataManager, config: Dict, risk_type: str) -> Optional[folium.Map]:
-        if dm.zones_gdf.empty:
-            logger.warning("Cannot plot heatmap, zones_gdf is empty.")
-            return None
-        map_center = [32.53, -117.04]
-        if config.get('mapbox_api_key'):
-            tiles = f"https://api.mapbox.com/styles/v1/mapbox/light-v10/tiles/{{z}}/{{x}}/{{y}}?access_token={config['mapbox_api_key']}"
-            attr = "Mapbox"
-        else:
-            tiles = "OpenStreetMap"
-            attr = "OpenStreetMap"
-        
-        m = folium.Map(location=map_center, zoom_start=12, tiles=tiles, attr=attr)
-        
-        if not kpi_df.empty and risk_type in kpi_df.columns:
-            merged_gdf = dm.zones_gdf.join(kpi_df.set_index('Zone'))
-            folium.Choropleth(
-                geo_data=merged_gdf,
-                name='Risk Choropleth',
-                data=merged_gdf,
-                columns=[merged_gdf.index, risk_type],
-                key_on='feature.id',
-                fill_color='YlOrRd',
-                fill_opacity=0.7,
-                line_opacity=0.2,
-                legend_name=f'{risk_type} by Zone',
-                highlight=True
-            ).add_to(m)
-        
-        for zone, row in dm.zones_gdf.iterrows():
-            popup_text = f"<b>Zone: {zone}</b><br>"
-            if not kpi_df.empty and zone in kpi_df['Zone'].values:
-                kpi_row = kpi_df.loc[kpi_df['Zone'] == zone].iloc[0]
-                popup_text += (
-                    f"Ensemble Risk: {kpi_row['Ensemble Risk Score']:.3f}<br>"
-                    f"Violence Risk: {kpi_row['Violence Clustering Score']:.3f}<br>"
-                    f"Accident Risk: {kpi_row['Accident Clustering Score']:.3f}<br>"
-                    f"Medical Risk: {kpi_row['Medical Surge Score']:.3f}<br>"
-                    f"Response Time: {kpi_row['Response Time Estimate']:.1f} min"
-                )
-            folium.Marker(
-                location=[row.geometry.centroid.y, row.geometry.centroid.x],
-                popup=folium.Popup(popup_text, max_width=300),
-                icon=folium.Icon(icon='info-sign', color='blue')
-            ).add_to(m)
-
-        for amb_id, amb in dm.ambulances.items():
+        for amb in gdf.ambulances.values():
             folium.Marker(
                 location=[amb['location'].y, amb['location'].x],
-                popup=f"Ambulance {amb_id}: {amb['status']}",
-                icon=folium.Icon(
-                    color='green' if amb['status'] == 'Disponible' else 'red',
-                    icon='plus-sign'
-                )
-            ).add_to(m)
+                popup=f"{amb['id']} ({amb['status']})",
+                icon=folium.Icon(color='blue' if amb['status'] == 'Disponible' else 'red', icon='ambulance', prefix='fa')
+            ).add_to(heatmap)
         
-        return m
+        return heatmap
 
     @staticmethod
-    def plot_gauge_chart(kpi_df: pd.DataFrame) -> go.Figure:
-        if kpi_df.empty:
-            return go.Figure().add_annotation(
-                text="No KPI data available for gauge chart.",
-                showarrow=False,
-                font=dict(size=16, color="#2C3E50")
-            )
+    def plot_risk_trends(forecast_df: pd.DataFrame) -> go.Figure:
+        if forecast_df.empty:
+            return go.Figure()
         
         fig = go.Figure()
-        for i, zone in enumerate(kpi_df['Zone']):
-            risk_score = kpi_df.loc[kpi_df['Zone'] == zone, 'Ensemble Risk Score'].iloc[0]
-            fig.add_trace(go.Indicator(
-                mode="gauge+number",
-                value=risk_score,
-                title={'text': f"<b>{zone}</b>", 'font': {'size': 14}},
-                gauge={
-                    'axis': {'range': [0, 1], 'tickwidth': 1, 'tickcolor': "black"},
-                    'bar': {'color': "#2C3E50"},
-                    'steps': [
-                        {'range': [0, 0.3], 'color': "#2ECC71"},
-                        {'range': [0.3, 0.7], 'color': "#F1C40F"},
-                        {'range': [0.7, 1], 'color': "#E74C3C"}
-                    ],
-                    'threshold': {
-                        'line': {'color': "black", 'width': 4},
-                        'thickness': 0.75,
-                        'value': 0.5
-                    }
-                },
-                domain={
-                    'row': i // 2,
-                    'column': i % 2
-                }
+        for zone in forecast_df['Zone'].unique():
+            zone_data = forecast_df[forecast_df['Zone'] == zone]
+            fig.add_trace(go.Scatter(
+                x=zone_data['Horizon (Hours)'],
+                y=zone_data['Trauma Risk'],
+                mode='lines+markers',
+                name=f'{zone} - Trauma Risk'
+            ))
+            fig.add_trace(go.Scatter(
+                x=zone_data['Horizon (Hours)'],
+                y=zone_data['Disease Risk'],
+                mode='lines+markers',
+                name=f'{zone} - Disease Risk'
             ))
         
         fig.update_layout(
-            grid={'rows': (len(kpi_df) + 1) // 2, 'columns': 2, 'pattern': "independent"},
-            title_text="<b>Ensemble Risk Scores by Zone</b>",
-            title_font=dict(size=20, color='#2C3E50'),
-            margin=dict(l=50, r=50, t=80, b=50),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
+            title='Risk Forecast Trends by Zone',
+            xaxis_title='Forecast Horizon (Hours)',
+            yaxis_title='Risk Score',
+            template='plotly_dark'
         )
         return fig
 
 def main():
-    try:
-        config = load_config()
-    except Exception as e:
-        st.error(f"Failed to load configuration: {e}. Using default configuration.")
-        config = get_default_config()
-
-    dm = get_data_manager(config)
-    analytics = PredictiveAnalyticsEngine(dm, config)
-    advisor = StrategicAdvisor(dm, config)
-    viz = VisualizationSuite()
-    report_gen = ReportGenerator()
-
-    if 'run_count' not in st.session_state:
-        st.session_state.run_count = 0
-    if 'historical_data' not in st.session_state:
-        st.session_state.historical_data = []
-    if 'env_factors' not in st.session_state:
-        st.session_state.env_factors = EnvFactors(
-            is_holiday=False,
-            weather="Clear",
-            traffic_level=1.0,
-            major_event=False,
-            population_density=10000.0,
-            air_quality_index=50.0,
-            heatwave_alert=False
-        )
-
     st.title("RedShield AI: Phoenix v3.1.0")
-    st.markdown("**Commercial-grade predictive intelligence for urban emergency response**")
-
+    config = load_config()
+    dm = get_data_manager(config)
+    
     with st.sidebar:
-        st.header("Control Panel")
-        with st.expander("Environmental Factors", expanded=True):
-            holiday = st.checkbox("Is Holiday", value=st.session_state.env_factors.is_holiday)
-            weather = st.selectbox(
-                "Weather",
-                options=["Clear", "Rain", "Fog"],
-                index=["Clear", "Rain", "Fog"].index(st.session_state.env_factors.weather)
-            )
-            traffic = st.number_input(
-                "Traffic Level (0-2)", min_value=0.0, max_value=2.0, value=st.session_state.env_factors.traffic_level, step=0.1
-            )
-            major_event = st.checkbox("Major Event", value=st.session_state.env_factors.major_event)
-            pop_density = st.number_input(
-                "Population Density", min_value=1000.0, max_value=100000.0, value=float(st.session_state.env_factors.population_density), step=1000.0
-            )
-            air_quality = st.number_input(
-                "Air Quality Index (0-500)", min_value=0.0, max_value=500.0, value=float(st.session_state.env_factors.air_quality_index), step=10.0
-            )
-            heatwave = st.checkbox("Heatwave Alert", value=st.session_state.env_factors.heatwave_alert)
-            
-            st.session_state.env_factors = EnvFactors(
-                is_holiday=holiday,
-                weather=weather,
-                traffic_level=traffic,
-                major_event=major_event,
-                population_density=pop_density,
-                air_quality_index=air_quality,
-                heatwave_alert=heatwave
-            )
-
-        uploaded_file = st.file_uploader("Upload Historical Incident Data (JSON)", type="json")
+        st.header("Environmental Factors")
+        is_holiday = st.checkbox("Is Holiday", value=False)
+        weather = st.selectbox("Weather", ["Clear", "Rain", "Fog"], index=0)
+        traffic_level = st.slider("Traffic Level", 0.5, 2.0, 1.0)
+        major_event = st.checkbox("Major Event", value=False)
+        population_density = st.number_input("Population Density", min_value=1000.0, max_value=1000000.0, value=100000.0)
+        air_quality_index = st.number_input("Air Quality Index", min_value=0.0, max_value=500.0, value=50.0)
+        heatwave_alert = st.checkbox("Heatwave Alert", value=False)
+        
+        env_factors = EnvFactors(
+            is_holiday=is_holiday,
+            weather=weather,
+            traffic_level=traffic_level,
+            major_event=major_event,
+            population_density=population_density,
+            air_quality_index=air_quality_index,
+            heatwave_alert=heatwave_alert
+        )
+        
+        uploaded_file = st.file_uploader("Upload Historical Data (JSON)", type=['json'])
+        historical_data = []
         if uploaded_file:
             try:
-                data = json.load(uploaded_file)
-                st.session_state.historical_data = data if isinstance(data, list) else []
-                st.success("Historical data uploaded successfully.")
+                historical_data = json.load(uploaded_file)
+                st.success("Historical data loaded successfully!")
             except Exception as e:
-                st.error(f"Failed to load file: {e}")
+                st.error(f"Failed to load historical data: {e}")
+                historical_data = []
 
-        if st.button("Download Sample History"):
-            buffer = dm._generate_sample_history_file()
-            st.download_button(
-                label="Download Sample History JSON",
-                data=buffer,
-                file_name="sample_history.json",
-                mime="application/json"
-            )
+    current_incidents = dm.get_current_incidents(env_factors)
+    pae = PredictiveAnalyticsEngine(dm, config)
+    kpi_df = pae.generate_kpis(historical_data, env_factors, current_incidents)
+    forecast_df = pae.forecast_risk(kpi_df)
+    sa = StrategicAdvisor(dm, config)
+    recommendations = sa.recommend_allocations(kpi_df, forecast_df)
+    
+    st.header("Key Performance Indicators")
+    st.dataframe(kpi_df.style.format("{:.3f}", subset=kpi_df.select_dtypes(include=[np.number]).columns))
+    
+    st.header("Risk Forecast")
+    st.dataframe(forecast_df.style.format("{:.3f}", subset=forecast_df.select_dtypes(include=[np.number]).columns))
+    
+    st.header("Resource Allocation Recommendations")
+    if recommendations:
+        st.table(recommendations)
+    else:
+        st.write("No reallocation recommended at this time.")
+    
+    st.header("Risk Heatmap")
+    heatmap = VisualizationSuite.plot_risk_heatmap(dm.zones_gdf, kpi_df)
+    st_folium(heatmap, width=700, height=500)
+    
+    st.header("Risk Trends")
+    trends = VisualizationSuite.plot_risk_trends(forecast_df)
+    st.plotly_chart(trends, use_container_width=True)
+    
+    st.header("Generate Report")
+    if st.button("Download PDF Report"):
+        pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, recommendations, forecast_df)
+        st.download_button(
+            label="Download Report",
+            data=pdf_buffer,
+            file_name="redshield_phoenix_report.pdf",
+            mime="application/pdf"
+        )
 
-    st.header("Real-Time System Insights")
-    current_incidents = dm.get_current_incidents(st.session_state.env_factors)
-    kpi_df = analytics.generate_kpis(st.session_state.historical_data, st.session_state.env_factors, current_incidents)
-    forecast_df = analytics.forecast_risk(kpi_df)
-    recommendations = advisor.recommend_allocations(kpi_df, forecast_df)
-
-    st.subheader("Actionable KPI Dashboard")
-    st.plotly_chart(viz.plot_kpi_dashboard(kpi_df), use_container_width=True)
-
-    st.subheader("Zone Risk Profile Comparison")
-    st.plotly_chart(viz.plot_radar_chart(kpi_df), use_container_width=True)
-
-    st.subheader("Risk Breakdown by Incident Type")
-    st.plotly_chart(viz.plot_risk_breakdown(kpi_df), use_container_width=True)
-
-    st.subheader("Ensemble Risk Scores")
-    st.plotly_chart(viz.plot_gauge_chart(kpi_df), use_container_width=True)
-
-    st.subheader("Risk Heatmap")
-    heatmap = viz.plot_risk_heatmap(kpi_df, dm, config, 'Ensemble Risk Score')
-    if heatmap:
-        st_folium(heatmap, width=700, height=500)
+if __name__ == "__main__":
+    main()
