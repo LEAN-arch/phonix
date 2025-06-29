@@ -14,7 +14,7 @@ from core import DataManager, PredictiveAnalyticsEngine, EnvFactors
 from utils import load_config, ReportGenerator
 
 # --- System Setup ---
-st.set_page_config(page_title="RedShield AI: Phoenix v3.2.5", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v3.2.7", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 
@@ -34,13 +34,26 @@ class Dashboard:
 
         if 'historical_data' not in st.session_state:
             st.session_state['historical_data'] = []
+            
+        # --- ENHANCEMENT: Initialize session_state with the new, detailed EnvFactors ---
         if 'env_factors' not in st.session_state:
             avg_pop_density = self.dm.zones_gdf['population'].mean() if not self.dm.zones_gdf.empty else 50000
-            st.session_state['env_factors'] = EnvFactors(is_holiday=False, weather="Clear", traffic_level=1.0, major_event=False, population_density=avg_pop_density, air_quality_index=50.0, heatwave_alert=False)
+            st.session_state['env_factors'] = EnvFactors(
+                # Original factors
+                is_holiday=False, weather="Clear", traffic_level=1.0, major_event=False, 
+                population_density=avg_pop_density, air_quality_index=50.0, heatwave_alert=False,
+                # New strategic factors with default values
+                day_type='Weekday', 
+                time_of_day='Midday', 
+                public_event_type='None',
+                hospital_divert_status=0.0, 
+                police_activity='Normal', 
+                school_in_session=True
+            )
 
     def render(self):
         """Main rendering loop for the Streamlit application."""
-        st.title("RedShield AI: Phoenix v3.2.5")
+        st.title("RedShield AI: Phoenix v3.2.7")
         st.markdown("**Real-time Emergency Response Optimization Platform**")
 
         self._render_sidebar()
@@ -77,20 +90,44 @@ class Dashboard:
             forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk')
             st.dataframe(forecast_pivot.style.format("{:.3f}").background_gradient(cmap='YlOrRd', axis=1), use_container_width=True)
 
-        # --- ADDITION: New section for explanations and detailed KPIs ---
         self._render_explanations(kpi_df)
 
     def _render_sidebar(self):
         st.sidebar.header("Environmental Factors")
         env = st.session_state['env_factors']
+        
         is_holiday = st.sidebar.checkbox("Is Holiday", value=env.is_holiday, key="is_holiday_sb")
         weather = st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=["Clear", "Rain", "Fog"].index(env.weather), key="weather_sb")
-        traffic = st.sidebar.slider("Traffic Level", 0.5, 3.0, env.traffic_level, 0.1, key="traffic_sb")
-        event = st.sidebar.checkbox("Major Event", value=env.major_event, key="event_sb")
+        # NOTE: This is now a general traffic multiplier, with school status applied in the backend
+        traffic = st.sidebar.slider("General Traffic Level", 0.5, 3.0, env.traffic_level, 0.1, key="traffic_sb", help="A general multiplier for traffic congestion.")
+        # The original "Major Event" checkbox is now functionally replaced by "Public Event Type" but is kept in EnvFactors for backend logic
+        # event = st.sidebar.checkbox("Major Event", value=env.major_event, key="event_sb") # This line is removed and replaced by the logic below
         aqi = st.sidebar.slider("Air Quality Index (AQI)", 0.0, 500.0, env.air_quality_index, 5.0, key="aqi_sb")
         heatwave = st.sidebar.checkbox("Heatwave Alert", value=env.heatwave_alert, key="heatwave_sb")
 
-        new_env = EnvFactors(is_holiday, weather, traffic, event, env.population_density, aqi, heatwave)
+        # --- ENHANCEMENT: New section for detailed strategic factors ---
+        st.sidebar.subheader("Detailed Contextual Factors")
+        
+        day_type = st.sidebar.selectbox("Day Type", ['Weekday', 'Friday', 'Weekend'], index=['Weekday', 'Friday', 'Weekend'].index(env.day_type))
+        time_of_day = st.sidebar.selectbox("Time of Day", ['Morning Rush', 'Midday', 'Evening Rush', 'Night'], index=['Morning Rush', 'Midday', 'Evening Rush', 'Night'].index(env.time_of_day))
+        
+        public_event_type = st.sidebar.selectbox("Public Event Type", ['None', 'Sporting Event', 'Concert/Festival', 'Public Protest'], index=['None', 'Sporting Event', 'Concert/Festival', 'Public Protest'].index(env.public_event_type))
+        major_event = public_event_type != 'None' # Keep the old 'major_event' boolean in sync
+
+        hospital_divert_status = st.sidebar.slider("Hospital Divert Status (%)", 0, 100, int(env.hospital_divert_status * 100), 5, help="Percentage of hospitals on diversion, indicating system strain.") / 100.0
+
+        police_activity = st.sidebar.selectbox("Police Activity Level", ['Low', 'Normal', 'High'], index=['Low', 'Normal', 'High'].index(env.police_activity))
+        
+        school_in_session = st.sidebar.checkbox("School In Session", value=env.school_in_session)
+
+        # --- ENHANCEMENT: Create new EnvFactors object with all variables (old and new) ---
+        new_env = EnvFactors(
+            is_holiday=is_holiday, weather=weather, traffic_level=traffic, major_event=major_event,
+            population_density=env.population_density, air_quality_index=aqi, heatwave_alert=heatwave,
+            day_type=day_type, time_of_day=time_of_day, public_event_type=public_event_type,
+            hospital_divert_status=hospital_divert_status, police_activity=police_activity, school_in_session=school_in_session
+        )
+
         if new_env != st.session_state['env_factors']:
             st.session_state['env_factors'] = new_env
             st.rerun()
@@ -148,7 +185,6 @@ class Dashboard:
             logger.error(f"Failed to render map: {e}", exc_info=True)
             st.error(f"Error rendering map: {e}")
 
-    # --- ADDITION: New method to render all explanations ---
     def _render_explanations(self, kpi_df: pd.DataFrame):
         st.header("Methodology & KPI Explanations")
 
