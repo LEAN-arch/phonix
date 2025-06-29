@@ -915,7 +915,7 @@ class StrategicAdvisor:
                     available_ambulances.remove(closest_amb)
 
         return recommendations[:2]
-    class ReportGenerator:
+        class ReportGenerator:
     @staticmethod
     def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
         buffer = io.BytesIO()
@@ -1128,3 +1128,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
