@@ -5,7 +5,7 @@ from pathlib import Path
 import logging
 import io
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 import pandas as pd
 from reportlab.lib.pagesizes import letter
@@ -118,7 +118,6 @@ def load_config(config_path: str = "config.json") -> Dict[str, Any]:
         if Path(config_path).exists():
             with open(config_path, 'r', encoding='utf-8') as f:
                 user_config = json.load(f)
-                # Deep merge could be used here, but for this structure, update is fine.
                 config.update(user_config)
         
         mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key"))
@@ -176,27 +175,36 @@ class ReportGenerator:
         elements.append(Spacer(1, 12))
 
         elements.append(Paragraph("Key Performance Indicators (KPIs)", styles['Heading2']))
-        kpi_df_report = kpi_df.round(2)
-        kpi_data = [kpi_df_report.columns.tolist()] + kpi_df_report.values.tolist()
-        kpi_table = Table(kpi_data, hAlign='LEFT')
-        kpi_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
-        ]))
-        elements.append(kpi_table)
+        if not kpi_df.empty:
+            kpi_df_report = kpi_df.round(2)
+            kpi_data = [kpi_df_report.columns.tolist()] + kpi_df_report.values.tolist()
+            kpi_table = Table(kpi_data, hAlign='LEFT')
+            kpi_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
+            ]))
+            elements.append(kpi_table)
         elements.append(Spacer(1, 12))
         
         elements.append(Paragraph("Forecast Summary (Combined Risk)", styles['Heading2']))
-        forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk').round(2)
-        forecast_data = [['Zone'] + forecast_pivot.columns.tolist()] + [[idx] + row for idx, row in forecast_pivot.iterrows()]
-        forecast_table = Table(forecast_data, hAlign='LEFT')
-        forecast_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
-        ]))
-        elements.append(forecast_table)
+        if not forecast_df.empty:
+            forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk').round(2)
+            
+            # --- BUG FIX STARTS HERE ---
+            # Convert the row (a pandas Series) to a list before concatenating with another list.
+            header = [['Zone'] + forecast_pivot.columns.tolist()]
+            table_data = [[idx] + row.tolist() for idx, row in forecast_pivot.iterrows()]
+            forecast_data = header + table_data
+            # --- BUG FIX ENDS HERE ---
+
+            forecast_table = Table(forecast_data, hAlign='LEFT')
+            forecast_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.grey), ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black), ('BACKGROUND', (0, 1), (-1, -1), colors.beige)
+            ]))
+            elements.append(forecast_table)
         elements.append(Spacer(1, 12))
         
         elements.append(Paragraph("Ambulance Allocation Recommendations", styles['Heading2']))
