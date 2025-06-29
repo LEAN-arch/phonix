@@ -205,7 +205,7 @@ class PredictiveAnalyticsEngine:
     @st.cache_data
     def generate_kpis(_self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
         kpi_cols = ['Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 'Ensemble Risk Score']
-        kpi_df = pd.DataFrame(0, index=_self.dm.zones, columns=kpi_cols)
+        kpi_df = pd.DataFrame(0, index=_self.dm.zones, columns=kpi_cols, dtype=float)
 
         all_incidents = [inc for h in historical_data for inc in h.get('incidents', [])] + current_incidents
         if not all_incidents:
@@ -280,30 +280,44 @@ class PredictiveAnalyticsEngine:
             return np.log(series.diff().abs().mean() + 1)
         except Exception: return 0.0
 
+    # --- BUG FIX STARTS HERE ---
+    # Refactored this function to be more robust and avoid in-place addition errors.
     def calculate_ensemble_risk_score(_self, kpi_df: pd.DataFrame, historical_data: List[Dict]) -> pd.Series:
-        if kpi_df.empty or not _self.method_weights: return pd.Series(0.0, index=kpi_df.index)
+        if kpi_df.empty or not _self.method_weights:
+            return pd.Series(0.0, index=kpi_df.index)
+        
+        normalized_scores_df = pd.DataFrame(index=kpi_df.index)
         
         def normalize(series: pd.Series) -> pd.Series:
             min_val, max_val = series.min(), series.max()
-            return (series - min_val) / (max_val - min_val + 1e-9) if max_val > min_val else pd.Series(0.0, index=series.index)
+            if max_val > min_val:
+                return (series - min_val) / (max_val - min_val)
+            return pd.Series(0.0, index=series.index)
             
-        scores = pd.Series(0.0, index=kpi_df.index)
         chaos_amp = _self.model_params.get('chaos_amplifier', 1.5) if historical_data and np.var([len(h.get('incidents',[])) for h in historical_data]) > np.mean([len(h.get('incidents',[])) for h in historical_data]) else 1.0
 
         component_map = { 'hawkes': 'Trauma Clustering Score', 'sir': 'Disease Surge Score', 'bayesian': 'Bayesian Confidence Score', 'graph': 'Spatial Spillover Risk', 'chaos': 'Chaos Sensitivity Score', 'info': 'Risk Entropy', 'game': 'Resource Adequacy Index', 'violence': 'Violence Clustering Score', 'accident': 'Accident Clustering Score', 'medical': 'Medical Surge Score'}
         
         for weight_key, metric in component_map.items():
             if metric in kpi_df.columns and _self.method_weights.get(weight_key, 0) > 0:
-                col = kpi_df[metric]
+                col = kpi_df[metric].copy()
                 if metric == 'Resource Adequacy Index': col = 1 - col
                 if metric == 'Chaos Sensitivity Score': col *= chaos_amp
-                scores += normalize(col) * _self.method_weights[weight_key]
-        
+                normalized_scores_df[weight_key] = normalize(col)
+
         if _self.method_weights.get('tcnn', 0) > 0 and not _self.forecast_df.empty:
             tcnn_risk = _self.forecast_df[_self.forecast_df['Horizon (Hours)'] == 3].set_index('Zone')[['Violence Risk', 'Accident Risk', 'Medical Risk']].mean(axis=1)
-            scores += normalize(tcnn_risk.reindex(_self.dm.zones, fill_value=0)) * _self.method_weights['tcnn']
+            normalized_scores_df['tcnn'] = normalize(tcnn_risk.reindex(_self.dm.zones, fill_value=0))
 
-        return scores.clip(0, 1)
+        # Calculate weighted average
+        weights = pd.Series(_self.method_weights)
+        # Align columns of scores and weights for dot product
+        aligned_scores, aligned_weights = normalized_scores_df.align(weights, axis=1, fill_value=0)
+        
+        final_scores = aligned_scores.dot(aligned_weights)
+        
+        return final_scores.clip(0, 1)
+    # --- BUG FIX ENDS HERE ---
 
     def generate_forecast(self, historical_data: List[Dict], env_factors: EnvFactors, kpi_df: pd.DataFrame) -> pd.DataFrame:
         if kpi_df.empty: return pd.DataFrame()
@@ -322,25 +336,16 @@ class PredictiveAnalyticsEngine:
                     'Combined Risk': row['Ensemble Risk Score'] * decay
                 })
         
-        # --- BUG FIX STARTS HERE ---
-        # Create the DataFrame first.
         forecast_df = pd.DataFrame(forecast_data)
-        
-        # If the DataFrame is empty, no need to clip.
         if forecast_df.empty:
             self.forecast_df = forecast_df
             return self.forecast_df
 
-        # Define which columns are numeric risk scores that need clipping.
         risk_cols_to_clip = ['Violence Risk', 'Accident Risk', 'Medical Risk', 'Combined Risk']
-        
-        # Apply the clip operation ONLY to the specified numeric columns.
         forecast_df[risk_cols_to_clip] = forecast_df[risk_cols_to_clip].clip(0, 1)
         
-        # Store and return the correctly clipped DataFrame.
         self.forecast_df = forecast_df
         return self.forecast_df
-        # --- BUG FIX ENDS HERE ---
 
     def generate_allocation_recommendations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> Dict[str, int]:
         if kpi_df.empty or forecast_df.empty: return {zone: 0 for zone in self.dm.zones}
