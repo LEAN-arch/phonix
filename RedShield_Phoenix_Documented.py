@@ -441,7 +441,7 @@ class DataManager:
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
-class PredictiveAnalyticsEngine:
+        class PredictiveAnalyticsEngine:
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
@@ -913,7 +913,6 @@ class StrategicAdvisor:
 
         return recommendations[:2]
         class ReportGenerator:
-   class ReportGenerator:
     @staticmethod
     def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
         buffer = io.BytesIO()
