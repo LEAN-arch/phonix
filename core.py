@@ -169,7 +169,6 @@ class DataManager:
         buffer.seek(0)
         return buffer
 
-
 class PredictiveAnalyticsEngine:
     """Encapsulates all predictive models and risk calculation logic."""
     def __init__(self, dm: DataManager, config: Dict[str, Any]):
@@ -205,7 +204,6 @@ class PredictiveAnalyticsEngine:
 
     @st.cache_data
     def generate_kpis(_self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
-        """Calculates a comprehensive suite of KPIs for each zone. Heavily optimized for performance."""
         kpi_cols = ['Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Response Time Estimate', 'Trauma Clustering Score', 'Disease Surge Score', 'Trauma-Disease Correlation', 'Violence Clustering Score', 'Accident Clustering Score', 'Medical Surge Score', 'Ensemble Risk Score']
         kpi_df = pd.DataFrame(0, index=_self.dm.zones, columns=kpi_cols)
 
@@ -213,34 +211,24 @@ class PredictiveAnalyticsEngine:
         if not all_incidents:
             return kpi_df.reset_index().rename(columns={'index': 'Zone'})
 
-        # --- 1. Data Preparation and High-Performance Zone Mapping ---
         incident_df = pd.DataFrame(all_incidents)
         locations = [Point(loc['lon'], loc['lat']) for loc in incident_df['location']]
         incident_gdf = gpd.GeoDataFrame(incident_df, geometry=locations, crs="EPSG:4326")
         
-        # --- BUG FIX STARTS HERE ---
-        # The sjoin creates a column named 'name' because the zones_gdf index is named 'name'.
-        # We rename this column to 'Zone' for clarity.
-        # We also drop the unnecessary columns from zones_gdf that are merged in.
         incidents_with_zones_raw = gpd.sjoin(incident_gdf, _self.dm.zones_gdf, how="inner", predicate="within")
         
-        # Keep only original columns plus the zone name, drop duplicates if incident is on a border
         cols_to_keep = list(incident_gdf.columns) + ['name']
         incidents_with_zones = incidents_with_zones_raw[cols_to_keep].copy()
         incidents_with_zones.rename(columns={'name': 'Zone'}, inplace=True)
         incidents_with_zones.drop_duplicates(subset=['id'], keep='first', inplace=True)
-        # --- BUG FIX ENDS HERE ---
 
         if incidents_with_zones.empty: return kpi_df.reset_index().rename(columns={'index': 'Zone'})
 
-        # --- 2. Vectorized KPI Calculations ---
-        # Incident Counts & Distributions
         incident_counts = incidents_with_zones['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         violence_counts = incidents_with_zones[incidents_with_zones['type'] == 'Trauma-Violence']['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         accident_counts = incidents_with_zones[incidents_with_zones['type'] == 'Trauma-Accident']['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         medical_counts = incidents_with_zones[incidents_with_zones['type'].isin(['Medical-Chronic', 'Medical-Acute'])]['Zone'].value_counts().reindex(_self.dm.zones, fill_value=0)
         
-        # Bayesian Model
         if _self.bn_model:
             try:
                 inference = VariableElimination(_self.bn_model)
@@ -255,7 +243,6 @@ class PredictiveAnalyticsEngine:
         else:
             baseline_rate, kpi_df['Bayesian Confidence Score'] = 5.0, 0.5
 
-        # Information Theory KPIs
         current_dist = incident_counts / (incident_counts.sum() + 1e-9)
         prior_dist = pd.Series(_self.config['data']['distributions']['zone']).reindex(_self.dm.zones, fill_value=1e-9)
         with np.errstate(divide='ignore', invalid='ignore'):
@@ -264,12 +251,10 @@ class PredictiveAnalyticsEngine:
         kpi_df['Anomaly Score'] = kl_divergence
         kpi_df['Risk Entropy'] = shannon_entropy
 
-        # Chaos & Spillover KPIs
         kpi_df['Chaos Sensitivity Score'] = _self._calculate_lyapunov_exponent(historical_data)
         base_probs = (baseline_rate * prior_dist * _self.dm.zones_gdf['crime_rate_modifier']).clip(0, 1)
         kpi_df['Spatial Spillover Risk'] = _self.model_params['laplacian_diffusion_factor'] * (_self.dm.laplacian_matrix @ base_probs.values)
 
-        # Sub-Model Scores
         hawkes_params = _self.model_params['hawkes_process']
         sir_params = _self.model_params['sir_model']
         kpi_df['Violence Clustering Score'] = (violence_counts * hawkes_params['kappa'] * hawkes_params['violence_weight']).clip(0, 1)
@@ -278,14 +263,11 @@ class PredictiveAnalyticsEngine:
         kpi_df['Trauma Clustering Score'] = (kpi_df['Violence Clustering Score'] + kpi_df['Accident Clustering Score']) / 2
         kpi_df['Disease Surge Score'] = kpi_df['Medical Surge Score']
         
-        # Other KPIs
         kpi_df['Incident Probability'] = base_probs
         kpi_df['Expected Incident Volume'] = incident_counts
         available_units = sum(1 for a in _self.dm.ambulances.values() if a['status'] == 'Disponible')
         kpi_df['Resource Adequacy Index'] = (available_units / (incident_counts.sum() + 1e-9)).clip(0, 1)
         kpi_df['Response Time Estimate'] = 10.0 * (1 + _self.model_params['response_time_penalty'] * (1-kpi_df['Resource Adequacy Index']))
-
-        # Ensemble Score
         kpi_df['Ensemble Risk Score'] = _self.calculate_ensemble_risk_score(kpi_df, historical_data)
 
         return kpi_df.fillna(0).reset_index().rename(columns={'index': 'Zone'})
@@ -325,8 +307,10 @@ class PredictiveAnalyticsEngine:
 
     def generate_forecast(self, historical_data: List[Dict], env_factors: EnvFactors, kpi_df: pd.DataFrame) -> pd.DataFrame:
         if kpi_df.empty: return pd.DataFrame()
+
         forecast_data = []
         decay_rates = self.model_params['fallback_forecast_decay_rates']
+        
         for _, row in kpi_df.iterrows():
             for horizon in self.config['forecast_horizons_hours']:
                 decay = decay_rates.get(str(horizon), 0.5)
@@ -337,8 +321,26 @@ class PredictiveAnalyticsEngine:
                     'Medical Risk': row['Medical Surge Score'] * decay,
                     'Combined Risk': row['Ensemble Risk Score'] * decay
                 })
-        self.forecast_df = pd.DataFrame(forecast_data).clip(0, 1)
+        
+        # --- BUG FIX STARTS HERE ---
+        # Create the DataFrame first.
+        forecast_df = pd.DataFrame(forecast_data)
+        
+        # If the DataFrame is empty, no need to clip.
+        if forecast_df.empty:
+            self.forecast_df = forecast_df
+            return self.forecast_df
+
+        # Define which columns are numeric risk scores that need clipping.
+        risk_cols_to_clip = ['Violence Risk', 'Accident Risk', 'Medical Risk', 'Combined Risk']
+        
+        # Apply the clip operation ONLY to the specified numeric columns.
+        forecast_df[risk_cols_to_clip] = forecast_df[risk_cols_to_clip].clip(0, 1)
+        
+        # Store and return the correctly clipped DataFrame.
+        self.forecast_df = forecast_df
         return self.forecast_df
+        # --- BUG FIX ENDS HERE ---
 
     def generate_allocation_recommendations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> Dict[str, int]:
         if kpi_df.empty or forecast_df.empty: return {zone: 0 for zone in self.dm.zones}
