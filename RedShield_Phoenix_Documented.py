@@ -383,7 +383,7 @@ class DataManager:
                     inc['type'] = 'Medical-Chronic'
                 valid_incidents.append(inc)
             except (ValueError, TypeError):
-                logger.warning(f"Skipping incident {inc['id']}: Invalid location data.")
+                logger.warning(f"Skipping incident {inc.get('id')}: Invalid location data.")
         return valid_incidents
 
     def _generate_synthetic_incidents(self, env_factors: EnvFactors) -> List[Dict]:
@@ -441,6 +441,9 @@ class DataManager:
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
+
+if __name__ == "__main__":
+    main()
 class PredictiveAnalyticsEngine:
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
@@ -912,8 +915,8 @@ class StrategicAdvisor:
                     available_ambulances.remove(closest_amb)
 
         return recommendations[:2]
-        class ReportGenerator:
-        @staticmethod
+    class ReportGenerator:
+    @staticmethod
     def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter)
