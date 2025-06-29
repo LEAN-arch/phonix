@@ -4,7 +4,7 @@ import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point, Polygon
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 import networkx as nx
 import os
 from pathlib import Path
@@ -17,10 +17,12 @@ from datetime import datetime, timedelta
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
 import io
 from scipy.stats import norm
 import folium
 from streamlit_folium import st_folium
+import hashlib
 
 # --- TCNN Model Definition ---
 try:
@@ -123,22 +125,23 @@ def load_config(config_path: str = "config.json") -> Dict[str, any]:
         if Path(config_path).exists():
             with open(config_path, 'r', encoding='utf-8') as f:
                 config.update(json.load(f))
-        else:
-            logger.info(f"Config file '{config_path}' not found. Generating default configuration.")
-            with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=4)
-
+        
         mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
         config['mapbox_api_key'] = mapbox_key if mapbox_key and "YOUR_KEY" not in mapbox_key else None
 
-        logger.debug(f"Loaded config: {json.dumps(config, indent=2)}")
         validate_config(config)
+        # Save updated config if modified during validation
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
         logger.info("System configuration loaded and validated successfully.")
         return config
     except (json.JSONDecodeError, ValueError, OSError) as e:
         logger.error(f"Failed to load or validate config: {e}. Using default configuration.", exc_info=True)
         st.warning(f"Configuration error: {e}. Using default configuration.")
-        return get_default_config()
+        config = get_default_config()
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
+        return config
 
 def get_default_config() -> Dict[str, any]:
     return {
@@ -237,7 +240,7 @@ def get_default_config() -> Dict[str, any]:
             }
         },
         "tcnn_params": {
-            "input_size": 9,
+            "input_size": 8,
             "output_size": 24,
             "channels": [16, 32, 64],
             "kernel_size": 2,
@@ -255,6 +258,7 @@ def validate_config(config: Dict[str, any]) -> None:
     if not zones:
         raise ValueError("No zones defined in configuration.")
         
+    modified = False
     for zone, data in zones.items():
         if 'polygon' not in data or not isinstance(data['polygon'], list) or len(data['polygon']) < 3:
             raise ValueError(f"Invalid polygon for zone '{zone}'.")
@@ -263,17 +267,24 @@ def validate_config(config: Dict[str, any]) -> None:
         if 'population' not in data or not isinstance(data['population'], (int, float)) or data['population'] <= 0:
             raise ValueError(f"Invalid population for zone '{zone}'.")
         if 'crime_rate_modifier' not in data or not isinstance(data['crime_rate_modifier'], (int, float)):
-            logger.warning(f"Invalid or missing crime_rate_modifier for zone '{zone}' (value: {data.get('crime_rate_modifier')}). Setting to default (1.0).")
+            logger.warning(f"Invalid or missing crime_rate_modifier for zone '{zone}' (value: {data.get('crime_rate_modifier')}). Setting to 1.0.")
             data['crime_rate_modifier'] = 1.0
+            modified = True
         elif data['crime_rate_modifier'] <= 0:
-            logger.warning(f"Non-positive crime_rate_modifier ({data['crime_rate_modifier']}) for zone '{zone}'. Setting to default (1.0).")
+            logger.warning(f"Non-positive crime_rate_modifier ({data['crime_rate_modifier']}) for zone '{zone}'. Setting to 1.0.")
             data['crime_rate_modifier'] = 1.0
+            modified = True
             
     for amb_id, amb_data in config.get('data', {}).get('ambulances', {}).items():
         if 'location' not in amb_data or not isinstance(amb_data['location'], list) or len(amb_data['location']) != 2:
             raise ValueError(f"Invalid location for ambulance '{amb_id}'.")
         if 'home_base' not in amb_data or amb_data['home_base'] not in zones:
             raise ValueError(f"Ambulance '{amb_id}' has an invalid home_base '{amb_data.get('home_base')}'.")
+    
+    if modified:
+        logger.info("Configuration modified during validation. Saving updated config.")
+        with open('config.json', 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
 
 @st.cache_resource
 def get_data_manager(config: Dict[str, any]) -> 'DataManager':
@@ -298,11 +309,14 @@ class DataManager:
         G = nx.Graph()
         G.add_nodes_from(self.zones)
         edges = self.data_config.get('road_network', {}).get('edges', [])
+        invalid_edges = 0
         for u, v, weight in edges:
             if u in G.nodes and v in G.nodes and isinstance(weight, (int, float)) and weight > 0:
                 G.add_edge(u, v, weight=float(weight))
             else:
-                logger.warning(f"Skipping invalid edge data: {[u, v, weight]}")
+                invalid_edges += 1
+        if invalid_edges > 0:
+            logger.warning(f"Skipped {invalid_edges} invalid edge(s) in road network.")
         return G
 
     def _build_zones_gdf(self) -> gpd.GeoDataFrame:
@@ -362,9 +376,10 @@ class DataManager:
 
     def _validate_and_process_incidents(self, incidents: List[Dict]) -> List[Dict]:
         valid_incidents = []
-        incident_types = self.data_config['distributions']['incident_type'].keys()
+        incident_types = list(self.data_config['distributions']['incident_type'].keys())
+        triage_types = list(self.data_config['distributions']['triage'].keys())
         for inc in incidents:
-            if not all(k in inc for k in ['id', 'type', 'triage', 'location']):
+            if not isinstance(inc, dict) or not all(k in inc for k in ['id', 'type', 'triage', 'location']):
                 logger.warning(f"Skipping incident {inc.get('id', 'N/A')}: Missing required fields.")
                 continue
             loc = inc['location']
@@ -377,6 +392,7 @@ class DataManager:
                     raise ValueError("Coordinates out of bounds.")
                 inc['location'] = Point(lon, lat)
                 inc['type'] = inc['type'] if inc['type'] in incident_types else 'Medical-Chronic'
+                inc['triage'] = inc['triage'] if inc['triage'] in triage_types else 'Green'
                 valid_incidents.append(inc)
             except (ValueError, TypeError) as e:
                 logger.warning(f"Skipping incident {inc.get('id', 'N/A')}: Invalid location data: {e}")
@@ -435,32 +451,40 @@ class DataManager:
         
         city_boundary = self.zones_gdf.unary_union
         bounds = city_boundary.bounds
-        sample_history = [
-            {
-                'incidents': [
-                    {
-                        'id': f"SAMPLE-{i}-{j}",
-                        'type': np.random.choice(
-                            list(self.data_config['distributions']['incident_type'].keys()),
-                            p=list(self.data_config['distributions']['incident_type'].values())
-                        ),
-                        'triage': np.random.choice(
-                            list(self.data_config['distributions']['triage'].keys()),
-                            p=list(self.data_config['distributions']['triage'].values())
-                        ),
-                        'zone': zone,
-                        'location': Point(np.random.uniform(bounds[0], bounds[2]), np.random.uniform(bounds[1], bounds[3])),
-                        'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()
-                    } for j in range(np.random.randint(1, 5)) for zone in self.zones
-                ],
+        sample_history = []
+        for i in range(3):
+            incidents = []
+            for zone in self.zones:
+                num_zone_incidents = np.random.randint(1, 5)
+                for j in range(num_zone_incidents):
+                    for _ in range(10):  # Retry to ensure point is within bounds
+                        point = Point(np.random.uniform(bounds[0], bounds[2]), np.random.uniform(bounds[1], bounds[3]))
+                        if city_boundary.contains(point):
+                            incidents.append({
+                                'id': f"SAMPLE-{i}-{j}",
+                                'type': np.random.choice(
+                                    list(self.data_config['distributions']['incident_type'].keys()),
+                                    p=list(self.data_config['distributions']['incident_type'].values())
+                                ),
+                                'triage': np.random.choice(
+                                    list(self.data_config['distributions']['triage'].keys()),
+                                    p=list(self.data_config['distributions']['triage'].values())
+                                ),
+                                'zone': zone,
+                                'location': point,
+                                'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()
+                            })
+                            break
+            sample_history.append({
+                'incidents': incidents,
                 'timestamp': (datetime.utcnow() - timedelta(hours=i*24)).isoformat()
-            } for i in range(3)
-        ]
+            })
         buffer = io.BytesIO()
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
-        class PredictiveAnalyticsEngine:
+
+class PredictiveAnalyticsEngine:
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
@@ -486,17 +510,19 @@ class DataManager:
         total_weight = sum(self.method_weights.values())
         self.method_weights = {k: v / total_weight for k, v in self.method_weights.items()} if total_weight > 0 else {}
 
-    @st.cache_resource
-    def _build_bayesian_network(_self) -> Optional[BayesianNetwork]:
+    @st.cache_resource(hash_funcs={dict: lambda x: hashlib.sha256(json.dumps(x, sort_keys=True).encode()).hexdigest()})
+    def _build_bayesian_network(_self, _config: Dict[str, any] = None) -> Optional[BayesianNetwork]:
         if not PGMPY_AVAILABLE:
             logger.info("pgmpy not available. Bayesian network disabled.")
             return None
         try:
             bn_config = _self.config['bayesian_network']
-            nodes = set(bn_config['cpds'].keys())
+            nodes = set()
             for edge in bn_config['structure']:
                 nodes.add(edge[0])
                 nodes.add(edge[1])
+            for node in bn_config['cpds']:
+                nodes.add(node)
             model = BayesianNetwork()
             model.add_nodes_from(nodes)
             model.add_edges_from(bn_config['structure'])
@@ -515,8 +541,8 @@ class DataManager:
             logger.warning(f"Failed to initialize Bayesian network: {e}. Disabling.", exc_info=True)
             return None
 
-    @st.cache_resource
-    def _initialize_tcnn(_self) -> Optional[TCNN]:
+    @st.cache_resource(hash_funcs={dict: lambda x: hashlib.sha256(json.dumps(x, sort_keys=True).encode()).hexdigest()})
+    def _initialize_tcnn(_self, _config: Dict[str, any] = None) -> Optional[TCNN]:
         if not TORCH_AVAILABLE:
             logger.info("PyTorch not available. TCNN disabled.")
             return None
@@ -538,7 +564,7 @@ class DataManager:
             return (series - min_val) / (max_val - min_val + 1e-9)
         
         scores = {}
-        historical_counts = [len(h.get('incidents', [])) for h in historical_data if h]
+        historical_counts = [len(h.get('incidents', [])) for h in historical_data if isinstance(h, dict)]
         chaos_amplifier = self.config['model_params'].get('chaos_amplifier', 1.5) if historical_counts and np.var(historical_counts) > np.mean(historical_counts) else 1.0
         
         for zone in self.dm.zones:
@@ -582,11 +608,12 @@ class DataManager:
                     ) / 3.0
                     contributions.append(normalize(pd.Series([tcnn_score]))[0] * self.method_weights.get('tcnn', 0))
             else:
-                contributions.append(normalize(zone_kpi['Incident Probability'].iloc[0]) * self.method_weights.get('tcnn', 0))
+                contributions.append(normalize(pd.Series([zone_kpi['Incident Probability'].iloc[0]]))[0] * self.method_weights.get('tcnn', 0))
             
             scores[zone] = min(max(np.sum(contributions), 0.0), 1.0)
         return scores
 
+    @st.cache_data
     def generate_kpis(self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
         kpi_data = [{
             'Zone': zone,
@@ -854,7 +881,7 @@ class DataManager:
             zone_centroid = self.dm.zones_gdf.loc[zone, 'geometry'].centroid
             distances = [
                 zone_centroid.distance(amb['location']) * 1000 / 50000 * 60 + self.config['model_params']['response_time_penalty']
-                for amb in available_ambulances
+                for amb in available_ambulances if isinstance(amb['location'], Point)
             ]
             response_times[zone] = min(distances) if distances else 10.0
         return response_times
@@ -896,9 +923,9 @@ class DataManager:
                         violence_idx = h_idx
                         accident_idx = h_idx + len(horizons)
                         medical_idx = h_idx + 2 * len(horizons)
-                        violence_risk = max(float(preds[violence_idx]), 0.0) if violence_idx < len(preds) else 0.0
-                        accident_risk = max(float(preds[accident_idx]), 0.0) if accident_idx < len(preds) else 0.0
-                        medical_risk = max(float(preds[medical_idx]), 0.0) if medical_idx < len(preds) else 0.0
+                        violence_risk = max(float(preds[violence_idx]) if violence_idx < len(preds) else 0.0, 0.0)
+                        accident_risk = max(float(preds[accident_idx]) if accident_idx < len(preds) else 0.0, 0.0)
+                        medical_risk = max(float(preds[medical_idx]) if medical_idx < len(preds) else 0.0, 0.0)
                         forecast_data.append({
                             'Zone': zone,
                             'Horizon (Hours)': horizon,
@@ -1014,19 +1041,21 @@ class ReportGenerator:
             if not kpi_df.empty:
                 elements.append(Paragraph("Key Performance Indicators", styles['Heading2']))
                 kpi_data = [kpi_df.columns.tolist()] + kpi_df.round(3).values.tolist()
-                kpi_table = Table(kpi_data)
+                kpi_table = Table(kpi_data, colWidths=[50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50, 50])
                 kpi_table.setStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), '#ECF0F1'),
-                    ('TEXTCOLOR', (0, 1), (-1, -1), '#000000'),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ECF0F1')),
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
                     ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ('GRID', (0, 0), (-1, -1), 1, '#000000')
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('WORDWRAP', (0, 0), (-1, -1), True)
                 ])
                 elements.append(kpi_table)
                 elements.append(Spacer(1, 12))
@@ -1036,19 +1065,21 @@ class ReportGenerator:
                 recommendation_data = [['Unit', 'From', 'To', 'Reason']] + [
                     [rec['unit'], rec['from'], rec['to'], rec['reason']] for rec in recommendations
                 ]
-                rec_table = Table(recommendation_data)
+                rec_table = Table(recommendation_data, colWidths=[50, 50, 50, 350])
                 rec_table.setStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), '#ECF0F1'),
-                    ('TEXTCOLOR', (0, 1), (-1, -1), '#000000'),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ECF0F1')),
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
                     ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ('GRID', (0, 0), (-1, -1), 1, '#000000')
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('WORDWRAP', (0, 0), (-1, -1), True)
                 ])
                 elements.append(rec_table)
                 elements.append(Spacer(1, 12))
@@ -1056,19 +1087,21 @@ class ReportGenerator:
             if not forecast_df.empty:
                 elements.append(Paragraph("Risk Forecast", styles['Heading2']))
                 forecast_data = [forecast_df.columns.tolist()] + forecast_df.round(3).values.tolist()
-                forecast_table = Table(forecast_data)
+                forecast_table = Table(forecast_data, colWidths=[100, 50, 50, 50, 50, 50])
                 forecast_table.setStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('FONTSIZE', (0, 0), (-1, 0), 8),
                     ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), '#ECF0F1'),
-                    ('TEXTCOLOR', (0, 1), (-1, -1), '#000000'),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#ECF0F1')),
+                    ('TEXTCOLOR', (0, 1), (-1, -1), colors.black),
                     ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ('GRID', (0, 0), (-1, -1), 1, '#000000')
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ('WORDWRAP', (0, 0), (-1, -1), True)
                 ])
                 elements.append(forecast_table)
                 elements.append(Spacer(1, 12))
@@ -1109,7 +1142,7 @@ class VisualizationSuite:
                         'weight': 2,
                         'fillOpacity': 0.5
                     },
-                    tooltip=idx
+                    tooltip=f"{idx} (Risk: {risk_score:.2f})"
                 ).add_to(heatmap)
             
             for amb in dm.ambulances.values():
@@ -1161,9 +1194,12 @@ def main():
     if uploaded_file:
         try:
             historical_data = json.load(uploaded_file)
+            if not isinstance(historical_data, list):
+                raise ValueError("Historical data must be a list of records.")
         except Exception as e:
             st.error(f"Failed to load historical data: {e}")
-    else:
+            historical_data = []
+    if not historical_data:
         historical_data = json.load(dm.generate_sample_history_file())
     
     kpi_df = pae.generate_kpis(historical_data, env_factors, current_incidents)
