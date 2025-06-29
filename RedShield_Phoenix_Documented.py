@@ -906,7 +906,7 @@ class ReportGenerator:
             elements.append(Paragraph("Risk Forecast (Multiple Horizons)", styles['Heading2']))
             forecast_data = [forecast_df.columns.tolist()] + forecast_df.round(3).values.tolist()
             forecast_table = Table(forecast_data)
-            glimpse_table.setStyle([
+            forecast_table.setStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), '#2C3E50'),
                 ('TEXTCOLOR', (0, 0), (-1, 0), '#FFFFFF'),
                 ('GRID', (0, 0), (-1, -1), 1, '#000000'),
@@ -1262,4 +1262,4 @@ def main():
     st.subheader("Risk Heatmap")
     heatmap = viz.plot_risk_heatmap(kpi_df, dm, config, 'Ensemble Risk Score')
     if heatmap:
-        st_folium(heatmap, width=700, height=500
+        st_folium(heatmap, width=700, height=500)
