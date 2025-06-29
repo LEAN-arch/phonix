@@ -441,7 +441,7 @@ class DataManager:
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
-        class PredictiveAnalyticsEngine:
+class PredictiveAnalyticsEngine:
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
