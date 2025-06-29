@@ -1,35 +1,3 @@
-# RedShield_Phoenix_Refactored.py
-# VERSION 3.1.0 - MODULAR, CONFIG-DRIVEN, & PRODUCTION-READY ARCHITECTURE WITH ENHANCED FEATURES
-#
-# This version extends the Phoenix Architecture v3.0.0 with additional features for environmental factors,
-# zone enrichment, granular incident types, expanded model parameters, multi-dimensional intensity models,
-# advanced scoring metrics, and an interactive Streamlit suite.
-#
-# KEY ENHANCEMENTS (v3.1.0):
-# 1. [ENVIRONMENTAL FACTORS] Added support for 7 environmental factors, including air_quality_index and heatwave_alert, influencing incident calculations in a weighted manner.
-# 2. [ZONE ENRICHMENT] Extended zones GeoDataFrame with crime_rate_modifier column, used in risk calculations.
-# 3. [INCIDENT TYPE GRANULARITY] Replaced broad incident_type labels with granular types (e.g., Trauma-Violence, Trauma-Accident, Medical-Chronic).
-# 4. [MODEL PARAMETERS] Added violence_weight and aqi_multiplier to model_params, applied to Hawkes and clustering models.
-# 5. [INTENSITY MODEL] Implemented multi-dimensional intensity model with accident_intensity, violence_prob, and medical_intensity, each driven by distinct sub-models.
-# 6. [SCORING METRICS] Added Violence Clustering Score, Accident Clustering Score, and Medical Surge Score, visualized and logged for readiness assessment.
-# 7. [INTERACTIVE SUITE] Added Streamlit sidebar expander with file uploader, download button, number input, selectbox, and event staging functionality, with session state management.
-# 8. [REFACTORING] Preserved all v3.0.0 functionality, ensuring no existing code or logic is removed or modified.
-#
-# PREVIOUS FEATURES (v3.0.0):
-# 1. [ARCHITECTURE] Modularized the TCNN model into a separate `models.py` file.
-# 2. [CONFIGURATION] Externalized all "magic numbers" and model parameters into `config.json`.
-# 3. [ROBUSTNESS] Strengthened `validate_config` with comprehensive checks.
-# 4. [REFACTORING] Eliminated the `SimulationEngine` class, merging its role into `DataManager`.
-# 5. [CLARITY] Introduced named constants for better readability and maintainability.
-# 6. [DOCUMENTATION] Added a `README.md` and a `requirements.txt` for project setup.
-# 7. [TYPE HINTING] Refined type hints for greater precision, replacing `Any` where possible.
-#
-"""
-RedShield AI: Phoenix Architecture v3.1.0
-A commercial-grade predictive intelligence engine for urban emergency response.
-Fuses advanced modeling for trauma and disease emergencies with multi-horizon forecasting and actionable insights.
-"""
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -89,7 +57,6 @@ logger = logging.getLogger(__name__)
 # --- Constants ---
 POPULATION_DENSITY_NORMALIZATION = 100000.0
 
-# 🔁 New Feature: Extended EnvFactors dataclass with additional environmental factors
 @dataclass(frozen=True)
 class EnvFactors:
     is_holiday: bool
@@ -97,21 +64,19 @@ class EnvFactors:
     traffic_level: float
     major_event: bool
     population_density: float
-    air_quality_index: float  # New: Air quality index (0-500, higher is worse)
-    heatwave_alert: bool      # New: Heatwave alert status
+    air_quality_index: float
+    heatwave_alert: bool
 
-# 🔁 New Feature: ZoneAttributes dataclass for enriched zone data
 @dataclass(frozen=True)
 class ZoneAttributes:
     name: str
     geometry: Polygon
     prior_risk: float
     population: float
-    crime_rate_modifier: float  # New: Crime rate modifier for risk calculations
+    crime_rate_modifier: float
 
 @st.cache_resource
 def load_config(config_path: str = "config.json") -> Dict[str, any]:
-    """Loads, validates, and returns the system configuration from a JSON file."""
     try:
         if not Path(config_path).exists():
             logger.warning(f"Config file '{config_path}' not found. Generating and using default configuration.")
@@ -122,7 +87,6 @@ def load_config(config_path: str = "config.json") -> Dict[str, any]:
             with open(config_path, 'r') as f:
                 config = json.load(f)
 
-        # Environment variable override for secrets
         mapbox_key = os.environ.get("MAPBOX_API_KEY", config.get("mapbox_api_key", ""))
         config['mapbox_api_key'] = mapbox_key if mapbox_key and "YOUR_KEY" not in mapbox_key else None
 
@@ -135,8 +99,6 @@ def load_config(config_path: str = "config.json") -> Dict[str, any]:
         return get_default_config()
 
 def get_default_config() -> Dict[str, any]:
-    """Returns a default configuration dictionary. Central source of truth for system parameters."""
-    # 🔁 New Feature: Updated default config with new incident types, model parameters, and weights
     return {
         "mapbox_api_key": None,
         "forecast_horizons_hours": [0.5, 1, 3, 6, 12, 24, 72, 144],
@@ -146,19 +108,19 @@ def get_default_config() -> Dict[str, any]:
                     "polygon": [[32.52, -117.03], [32.54, -117.03], [32.54, -117.05], [32.52, -117.05]],
                     "prior_risk": 0.7,
                     "population": 50000,
-                    "crime_rate_modifier": 1.2  # New: Higher crime rate in Centro
+                    "crime_rate_modifier": 1.2
                 },
                 "Otay": {
                     "polygon": [[32.53, -116.95], [32.54, -116.95], [32.54, -116.98], [32.53, -116.98]],
                     "prior_risk": 0.4,
                     "population": 30000,
-                    "crime_rate_modifier": 0.8  # New: Lower crime rate in Otay
+                    "crime_rate_modifier": 0.8
                 },
                 "Playas": {
                     "polygon": [[32.51, -117.11], [32.53, -117.11], [32.53, -117.13], [32.51, -117.13]],
                     "prior_risk": 0.3,
                     "population": 20000,
-                    "crime_rate_modifier": 1.0  # New: Average crime rate in Playas
+                    "crime_rate_modifier": 1.0
                 }
             },
             "ambulances": {
@@ -169,7 +131,7 @@ def get_default_config() -> Dict[str, any]:
             "distributions": {
                 "zone": {"Centro": 0.5, "Otay": 0.3, "Playas": 0.2},
                 "incident_type": {
-                    "Trauma-Violence": 0.2,  # New: Granular incident types
+                    "Trauma-Violence": 0.2,
                     "Trauma-Accident": 0.2,
                     "Medical-Chronic": 0.4,
                     "Medical-Acute": 0.2
@@ -184,8 +146,8 @@ def get_default_config() -> Dict[str, any]:
                 "kappa": 0.5,
                 "beta": 1.0,
                 "trauma_weight": 1.5,
-                "violence_weight": 1.8,  # New: Weight for violence-related incidents
-                "aqi_multiplier": 1.5    # New: Multiplier for air quality impact
+                "violence_weight": 1.8,
+                "aqi_multiplier": 1.5
             },
             "sir_model": {"beta": 0.3, "gamma": 0.1, "noise_scale": 0.05},
             "laplacian_diffusion_factor": 0.1,
@@ -201,9 +163,9 @@ def get_default_config() -> Dict[str, any]:
                 "tcnn": 10,
                 "game": 8,
                 "copula": 8,
-                "violence": 9,  # New: Weight for violence clustering
-                "accident": 8,  # New: Weight for accident clustering
-                "medical": 8    # New: Weight for medical surge
+                "violence": 9,
+                "accident": 8,
+                "medical": 8
             },
             "chaos_amplifier": 1.5,
             "fallback_forecast_decay_rates": {
@@ -220,15 +182,15 @@ def get_default_config() -> Dict[str, any]:
                 ("Holiday", "IncidentRate"),
                 ("Weather", "IncidentRate"),
                 ("MajorEvent", "IncidentRate"),
-                ("AirQuality", "IncidentRate"),  # New
-                ("Heatwave", "IncidentRate")     # New
+                ("AirQuality", "IncidentRate"),
+                ("Heatwave", "IncidentRate")
             ],
             "cpds": {
                 "Holiday": {"card": 2, "values": [[0.9], [0.1]], "evidence": None, "evidence_card": None},
                 "Weather": {"card": 2, "values": [[0.7], [0.3]], "evidence": None, "evidence_card": None},
                 "MajorEvent": {"card": 2, "values": [[0.8], [0.2]], "evidence": None, "evidence_card": None},
-                "AirQuality": {"card": 2, "values": [[0.8], [0.2]], "evidence": None, "evidence_card": None},  # New
-                "Heatwave": {"card": 2, "values": [[0.9], [0.1]], "evidence": None, "evidence_card": None},    # New
+                "AirQuality": {"card": 2, "values": [[0.8], [0.2]], "evidence": None, "evidence_card": None},
+                "Heatwave": {"card": 2, "values": [[0.9], [0.1]], "evidence": None, "evidence_card": None},
                 "IncidentRate": {
                     "card": 3,
                     "values": [
@@ -251,7 +213,6 @@ def get_default_config() -> Dict[str, any]:
     }
 
 def validate_config(config: Dict[str, any]) -> None:
-    """Validates the configuration structure and content, raising ValueError on failure."""
     required_sections = ['data', 'model_params', 'bayesian_network', 'tcnn_params']
     for section in required_sections:
         if section not in config or not isinstance(config[section], dict):
@@ -266,7 +227,6 @@ def validate_config(config: Dict[str, any]) -> None:
             raise ValueError(f"Invalid polygon for zone '{zone}'.")
         if 'population' not in data or not isinstance(data['population'], (int, float)) or data['population'] <= 0:
             raise ValueError(f"Invalid population for zone '{zone}'.")
-        # 🔁 New Feature: Validate crime_rate_modifier
         if 'crime_rate_modifier' not in data or not isinstance(data['crime_rate_modifier'], (int, float)) or data['crime_rate_modifier'] <= 0:
             raise ValueError(f"Invalid crime_rate_modifier for zone '{zone}'.")
             
@@ -276,14 +236,11 @@ def validate_config(config: Dict[str, any]) -> None:
         if 'home_base' not in amb_data or amb_data['home_base'] not in zones:
             raise ValueError(f"Ambulance '{amb_id}' has an invalid home_base '{amb_data.get('home_base')}'.")
 
-# --- L1: CORE DATA MODULE ---
 @st.cache_resource
 def get_data_manager(config: Dict[str, any]) -> 'DataManager':
-    """Initializes and caches the DataManager."""
     return DataManager(config)
 
 class DataManager:
-    """Manages static, real-time, and synthetic data assets."""
     def __init__(self, config: Dict[str, any]):
         self.config = config
         self.data_config = config['data']
@@ -299,7 +256,6 @@ class DataManager:
             self.laplacian_matrix = np.identity(len(self.zones))
 
     def _build_road_graph(self) -> nx.Graph:
-        """Builds the road network graph from config."""
         G = nx.Graph()
         G.add_nodes_from(self.zones)
         edges = self.data_config.get('road_network', {}).get('edges', [])
@@ -311,14 +267,12 @@ class DataManager:
         return G
 
     def _build_zones_gdf(self) -> gpd.GeoDataFrame:
-        """Builds a GeoDataFrame for city zones from config."""
         zone_data = []
         for name, data in self.data_config['zones'].items():
             try:
                 poly = Polygon([(lon, lat) for lat, lon in data['polygon']])
                 if not poly.is_valid:
                     poly = poly.buffer(0)
-                # 🔁 New Feature: Include crime_rate_modifier in GeoDataFrame
                 zone_data.append({
                     'name': name,
                     'geometry': poly,
@@ -334,7 +288,6 @@ class DataManager:
         return gpd.GeoDataFrame(zone_data, crs="EPSG:4326").set_index('name')
 
     def _initialize_ambulances(self) -> Dict[str, Dict]:
-        """Initializes ambulance data with shapely Point locations."""
         return {
             amb_id: {
                 'id': amb_id,
@@ -346,7 +299,6 @@ class DataManager:
         }
 
     def get_current_incidents(self, env_factors: EnvFactors) -> List[Dict]:
-        """Primary method to get incidents. Attempts to fetch from a source and falls back to synthetic generation."""
         api_config = self.data_config.get('real_time_api', {})
         endpoint = api_config.get('endpoint', '')
         try:
@@ -367,7 +319,6 @@ class DataManager:
             return self._generate_synthetic_incidents(env_factors)
 
     def _validate_and_process_incidents(self, incidents: List[Dict]) -> List[Dict]:
-        """Validates raw incident data and converts it to the application's format."""
         valid_incidents = []
         for inc in incidents:
             if not all(k in inc for k in ['id', 'type', 'triage', 'location']):
@@ -382,22 +333,19 @@ class DataManager:
                 if not (-90 <= lat <= 90 and -180 <= lon <= 180):
                     raise ValueError("Coordinates out of bounds.")
                 inc['location'] = Point(lon, lat)
-                # 🔁 New Feature: Ensure incident type is valid
                 if inc['type'] not in self.data_config['distributions']['incident_type']:
-                    inc['type'] = 'Medical-Chronic'  # Default to most common type
+                    inc['type'] = 'Medical-Chronic'
                 valid_incidents.append(inc)
             except (ValueError, TypeError):
                 logger.warning(f"Skipping incident {inc['id']}: Invalid location data.")
         return valid_incidents
 
     def _generate_synthetic_incidents(self, env_factors: EnvFactors) -> List[Dict]:
-        """Generates synthetic incident data as a fallback."""
         intensity = 5.0
         if env_factors.is_holiday: intensity *= 1.5
         if env_factors.weather.lower() in ['rain', 'fog']: intensity *= 1.2
         if env_factors.major_event: intensity *= 2.0
         intensity *= env_factors.traffic_level * (1 + 0.5 * env_factors.population_density / POPULATION_DENSITY_NORMALIZATION)
-        # 🔁 New Feature: Adjust intensity for air quality and heatwave
         if env_factors.air_quality_index > 100: intensity *= (1 + env_factors.air_quality_index / 500.0)
         if env_factors.heatwave_alert: intensity *= 1.3
         num_incidents = max(0, int(np.random.poisson(intensity)))
@@ -421,9 +369,7 @@ class DataManager:
         logger.info(f"Generated {len(incidents)} synthetic incidents.")
         return incidents
 
-    # 🔁 New Feature: Generate sample history file for download
     def _generate_sample_history_file(self) -> io.BytesIO:
-        """Generates a sample history file for download."""
         sample_history = [
             {
                 'incidents': [
@@ -449,16 +395,14 @@ class DataManager:
         buffer.write(json.dumps(sample_history, indent=2).encode('utf-8'))
         buffer.seek(0)
         return buffer
-# --- L2: PREDICTIVE ANALYTICS ENGINE ---
 class PredictiveAnalyticsEngine:
-    """Fuses multiple methodologies to generate predictive KPIs for trauma and disease emergencies."""
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
         self.bn_model = self._build_bayesian_network()
         self.tcnn_model = self._initialize_tcnn()
         
-        weights_config = config['model_params']['ensemble_weights']
+        weights_config = self.config['model_params']['ensemble_weights']
         self.method_weights = {
             'hawkes': weights_config.get('hawkes', 0),
             'sir': weights_config.get('sir', 0),
@@ -469,9 +413,9 @@ class PredictiveAnalyticsEngine:
             'tcnn': weights_config.get('tcnn', 0) if TORCH_AVAILABLE else weights_config.get('tcnn_fallback', 7),
             'game': weights_config.get('game', 0),
             'copula': weights_config.get('copula', 0),
-            'violence': weights_config.get('violence', 0),  # New
-            'accident': weights_config.get('accident', 0),  # New
-            'medical': weights_config.get('medical', 0)     # New
+            'violence': weights_config.get('violence', 0),
+            'accident': weights_config.get('accident', 0),
+            'medical': weights_config.get('medical', 0)
         }
         total_weight = sum(self.method_weights.values())
         self.method_weights = {k: v / total_weight for k, v in self.method_weights.items()} if total_weight > 0 else {}
@@ -509,9 +453,7 @@ class PredictiveAnalyticsEngine:
             return None
 
     def calculate_ensemble_risk_score(self, kpi_df: pd.DataFrame, historical_data: List[Dict]) -> Dict[str, float]:
-        """Computes a weighted ensemble risk score combining all methodologies."""
         if kpi_df.empty or not self.method_weights: return {zone: 0.0 for zone in self.dm.zones}
-
         def normalize(series):
             min_val, max_val = series.min(), max(series.max(), 1e-9)
             return (series - min_val) / (max_val - min_val + 1e-9)
@@ -535,7 +477,6 @@ class PredictiveAnalyticsEngine:
                 (normalize(zone_kpi['Risk Entropy'].iloc[0]) * 0.5 + normalize(zone_kpi['Anomaly Score'].iloc[0]) * 0.5) * self.method_weights['info'],
                 (1 - normalize(zone_kpi['Resource Adequacy Index'].iloc[0])) * self.method_weights['game'],
                 normalize(zone_kpi['Trauma-Disease Correlation'].iloc[0]) * self.method_weights['copula'],
-                # 🔁 New Feature: Add new clustering scores to ensemble
                 normalize(zone_kpi['Violence Clustering Score'].iloc[0]) * self.method_weights['violence'],
                 normalize(zone_kpi['Accident Clustering Score'].iloc[0]) * self.method_weights['accident'],
                 normalize(zone_kpi['Medical Surge Score'].iloc[0]) * self.method_weights['medical']
@@ -556,11 +497,75 @@ class PredictiveAnalyticsEngine:
         return scores
 
     def generate_kpis(self, historical_data: List[Dict], env_factors: EnvFactors, current_incidents: List[Dict]) -> pd.DataFrame:
-        """Computes KPIs for each zone."""
+        kpi_data = [{
+            'Zone': zone,
+            'Incident Probability': 0.0,
+            'Expected Incident Volume': 0.0,
+            'Risk Entropy': 0.0,
+            'Anomaly Score': 0.0,
+            'Spatial Spillover Risk': 0.0,
+            'Resource Adequacy Index': 0.0,
+            'Chaos Sensitivity Score': 0.0,
+            'Bayesian Confidence Score': 0.0,
+            'Response Time Estimate': 10.0,
+            'Trauma Clustering Score': 0.0,
+            'Disease Surge Score': 0.0,
+            'Trauma-Disease Correlation': 0.0,
+            'Violence Clustering Score': 0.0,
+            'Accident Clustering Score': 0.0,
+            'Medical Surge Score': 0.0,
+            'Ensemble Risk Score': 0.0
+        } for zone in self.dm.zones]
+
+        if not historical_data and not current_incidents:
+            logger.warning("No historical or current incident data provided. Returning empty KPI DataFrame.")
+            return pd.DataFrame(kpi_data)
+
+        # Combine historical and current incidents
+        all_incidents = []
+        for record in historical_data + [{'timestamp': pd.Timestamp.now(), 'incidents': current_incidents}]:
+            for incident in record.get('incidents', []):
+                incident_copy = incident.copy()
+                incident_copy['timestamp'] = record['timestamp']
+                all_incidents.append(incident_copy)
+
+        if not all_incidents:
+            logger.warning("No valid incidents found in data. Returning empty KPI DataFrame.")
+            return pd.DataFrame(kpi_data)
+
+        df = pd.DataFrame(all_incidents)
+        
+        # Map locations to zones
+        def get_zone(point):
+            for zone, row in self.dm.zones_gdf.iterrows():
+                if row['geometry'].contains(point):
+                    return zone
+            return None
+
+        if 'location' in df.columns:
+            df['zone'] = df['location'].apply(get_zone)
+        else:
+            possible_zone_columns = ['zone', 'Zone', 'zone_id', 'ZoneID']
+            zone_column = None
+            for col in possible_zone_columns:
+                if col in df.columns:
+                    zone_column = col
+                    break
+            if zone_column:
+                df['zone'] = df[zone_column]
+            else:
+                logger.error("No zone or location data found in incidents. Expected 'location' or one of: %s", possible_zone_columns)
+                return pd.DataFrame(kpi_data)
+
+        # Filter out incidents with no valid zone
+        df = df[df['zone'].isin(self.dm.zones)]
+        if df.empty:
+            logger.warning("No incidents with valid zones after mapping. Returning empty KPI DataFrame.")
+            return pd.DataFrame(kpi_data)
+
         if self.bn_model:
             try:
                 inference = VariableElimination(self.bn_model)
-                # 🔁 New Feature: Include new environmental factors in evidence
                 evidence = {
                     'Holiday': 1 if env_factors.is_holiday else 0,
                     'Weather': 1 if env_factors.weather != 'Clear' else 0,
@@ -578,9 +583,7 @@ class PredictiveAnalyticsEngine:
         else:
             baseline_rate, bayesian_confidence = 5.0, 0.5
 
-        df = pd.DataFrame(current_incidents) if current_incidents else pd.DataFrame(columns=['zone', 'type'])
         incident_counts = df['zone'].value_counts()
-        # 🔁 New Feature: Count granular incident types
         violence_counts = df[df['type'] == 'Trauma-Violence']['zone'].value_counts()
         accident_counts = df[df['type'] == 'Trauma-Accident']['zone'].value_counts()
         medical_counts = df[df['type'].isin(['Medical-Chronic', 'Medical-Acute'])]['zone'].value_counts()
@@ -588,7 +591,6 @@ class PredictiveAnalyticsEngine:
         disease_counts = df[df['type'].isin(['Medical-Chronic', 'Medical-Acute'])]['zone'].value_counts()
         
         past_incidents = sum([h.get('incidents', []) for h in historical_data if isinstance(h, dict)], [])
-        # 🔁 New Feature: Use multi-dimensional intensity models
         violence_intensity = self._calculate_violence_intensity(past_incidents, env_factors, self.config['model_params']['hawkes_process'])
         accident_intensity = self._calculate_accident_intensity(past_incidents, env_factors, self.config['model_params']['hawkes_process'])
         medical_intensity = self._calculate_medical_intensity(env_factors, self.config['model_params']['sir_model'])
@@ -606,7 +608,6 @@ class PredictiveAnalyticsEngine:
         response_times = self._calculate_response_times(current_incidents)
         trauma_cluster_scores = self._calculate_trauma_cluster_scores(trauma_counts, self.config['model_params']['hawkes_process'])
         disease_surge_scores = self._calculate_disease_surge_scores(disease_counts, self.config['model_params']['sir_model'])
-        # 🔁 New Feature: Calculate new clustering scores
         violence_cluster_scores = self._calculate_violence_cluster_scores(violence_counts, self.config['model_params']['hawkes_process'])
         accident_cluster_scores = self._calculate_accident_cluster_scores(accident_counts, self.config['model_params']['hawkes_process'])
         medical_surge_scores = self._calculate_medical_surge_scores(medical_counts, self.config['model_params']['sir_model'])
@@ -630,7 +631,6 @@ class PredictiveAnalyticsEngine:
             'Trauma Clustering Score': trauma_cluster_scores.get(zone, 0.0),
             'Disease Surge Score': disease_surge_scores.get(zone, 0.0),
             'Trauma-Disease Correlation': correlation_score,
-            # 🔁 New Feature: Add new clustering scores to KPIs
             'Violence Clustering Score': violence_cluster_scores.get(zone, 0.0),
             'Accident Clustering Score': accident_cluster_scores.get(zone, 0.0),
             'Medical Surge Score': medical_surge_scores.get(zone, 0.0)
@@ -642,14 +642,12 @@ class PredictiveAnalyticsEngine:
         return kpi_df
 
     def _calculate_base_probabilities(self, baseline: float, intensity: float, priors: Dict[str, float]) -> Dict[str, float]:
-        # 🔁 New Feature: Incorporate crime_rate_modifier in base probabilities
         return {
             zone: (baseline + intensity) * prob * self.dm.zones_gdf.loc[zone, 'crime_rate_modifier']
             for zone, prob in priors.items()
         }
 
     def _calculate_violence_intensity(self, past_incidents: List[Dict], env_factors: EnvFactors, params: Dict[str, float]) -> float:
-        """Calculates intensity for violence-related incidents."""
         violence_incidents = [inc for inc in past_incidents if inc.get('type') == 'Trauma-Violence']
         intensity = len(violence_incidents) * params.get('kappa', 0.5) * params.get('violence_weight', 1.8) * np.exp(-params.get('beta', 1.0))
         if env_factors.air_quality_index > 100:
@@ -659,7 +657,6 @@ class PredictiveAnalyticsEngine:
         return max(0.0, intensity)
 
     def _calculate_accident_intensity(self, past_incidents: List[Dict], env_factors: EnvFactors, params: Dict[str, float]) -> float:
-        """Calculates intensity for accident-related incidents."""
         accident_incidents = [inc for inc in past_incidents if inc.get('type') == 'Trauma-Accident']
         intensity = len(accident_incidents) * params.get('kappa', 0.5) * params.get('trauma_weight', 1.5) * np.exp(-params.get('beta', 1.0))
         if env_factors.traffic_level > 1.0:
@@ -669,7 +666,6 @@ class PredictiveAnalyticsEngine:
         return max(0.0, intensity)
 
     def _calculate_medical_intensity(self, env_factors: EnvFactors, params: Dict[str, float]) -> float:
-        """Calculates intensity for medical incidents using SIR model."""
         S, I = env_factors.population_density, 0.01 * env_factors.population_density
         beta, gamma, noise_scale = params['beta'], params['gamma'], params['noise_scale']
         intensity = max(0.0, beta * S * I / (S + 1e-9) - gamma * I + np.random.normal(0, noise_scale))
@@ -684,7 +680,6 @@ class PredictiveAnalyticsEngine:
         return intensity
 
     def _calculate_lyapunov_exponent(self, historical_data: List[Dict], current_dist: pd.Series) -> float:
-        """Estimates system chaos. Positive value suggests chaotic divergence."""
         if len(historical_data) < 2: return 0.0
         try:
             incident_counts_history = [pd.Series({inc['zone']: 1 for inc in h.get('incidents', []) if 'zone' in inc}).sum() for h in historical_data]
@@ -712,21 +707,18 @@ class PredictiveAnalyticsEngine:
         }
 
     def _calculate_violence_cluster_scores(self, violence_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        """Calculates clustering scores for violence incidents."""
         return {
             zone: violence_counts.get(zone, 0) * params['kappa'] * params['violence_weight'] * self.dm.zones_gdf.loc[zone, 'crime_rate_modifier']
             for zone in self.dm.zones
         }
 
     def _calculate_accident_cluster_scores(self, accident_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        """Calculates clustering scores for accident incidents."""
         return {
             zone: accident_counts.get(zone, 0) * params['kappa'] * params['trauma_weight'] * self.dm.zones_gdf.loc[zone, 'crime_rate_modifier']
             for zone in self.dm.zones
         }
 
     def _calculate_medical_surge_scores(self, medical_counts: pd.Series, params: Dict[str, float]) -> Dict[str, float]:
-        """Calculates surge scores for medical incidents."""
         return {
             zone: medical_counts.get(zone, 0) * params['beta'] * self.dm.zones_gdf.loc[zone, 'population'] / POPULATION_DENSITY_NORMALIZATION
             for zone in self.dm.zones
@@ -754,11 +746,9 @@ class PredictiveAnalyticsEngine:
         }
 
     def forecast_risk(self, kpi_df: pd.DataFrame) -> pd.DataFrame:
-        """Forecasts trauma and disease risks for multiple time horizons."""
         horizons = self.config.get('forecast_horizons_hours', [0.5, 1, 3, 6, 12, 24, 72, 144])
         if self.tcnn_model and not kpi_df.empty:
             try:
-                # 🔁 New Feature: Update features for TCNN to include new scores
                 features = [
                     'Incident Probability',
                     'Risk Entropy',
@@ -795,7 +785,6 @@ class PredictiveAnalyticsEngine:
             except Exception as e:
                 logger.warning(f"TCNN forecasting failed: {e}. Using baseline forecast.")
         
-        # Fallback to exponential smoothing with horizon-specific decay
         decay_rates = self.config['model_params']['fallback_forecast_decay_rates']
         forecast_data = []
         for zone in self.dm.zones:
@@ -819,15 +808,12 @@ class PredictiveAnalyticsEngine:
         self.forecast_df = pd.DataFrame(forecast_data)
         return self.forecast_df
 
-# --- L3: STRATEGIC ADVISOR ---
 class StrategicAdvisor:
-    """Optimizes resource allocation for emergency response."""
     def __init__(self, dm: DataManager, config: Dict[str, any]):
         self.dm = dm
         self.config = config
 
     def recommend_allocations(self, kpi_df: pd.DataFrame, forecast_df: pd.DataFrame) -> List[Dict]:
-        """Recommends ambulance reallocations based on ensemble risk scores and forecasts."""
         if kpi_df.empty or forecast_df.empty: return []
         available_ambulances = [amb for amb in self.dm.ambulances.values() if amb['status'] == 'Disponible']
         if not available_ambulances: return []
@@ -859,7 +845,6 @@ class StrategicAdvisor:
                 )
                 
                 if current_zone != target_zone:
-                    # Fix: Corrected f-string syntax for reason
                     reason = f"High integrated risk in {target_zone} (Ensemble Score: {kpi_df.loc[kpi_df['Zone'] == target_zone, 'Ensemble Risk Score'].iloc[0]:.2f}, 3hr Forecast: {(forecast_df.loc[(forecast_df['Zone'] == target_zone) & (forecast_df['Horizon (Hours)'] == 3), ['Violence Risk', 'Accident Risk', 'Medical Risk']].sum(axis=1).iloc[0] if not forecast_df.empty else 0):.2f})"
                     recommendations.append({
                         'unit': closest_amb['id'],
@@ -870,9 +855,7 @@ class StrategicAdvisor:
                     available_ambulances.remove(closest_amb)
 
         return recommendations[:2]
-# --- L4: REPORT GENERATION ---
 class ReportGenerator:
-    """Generates exportable PDF reports for actionable insights."""
     @staticmethod
     def generate_pdf_report(kpi_df: pd.DataFrame, recommendations: List[Dict], forecast_df: pd.DataFrame) -> io.BytesIO:
         buffer = io.BytesIO()
@@ -919,12 +902,9 @@ class ReportGenerator:
         buffer.seek(0)
         return buffer
 
-# --- L5: UI & VISUALIZATION ---
 class VisualizationSuite:
-    """Generates operational and analytical visualizations."""
     @staticmethod
     def plot_kpi_dashboard(kpi_df: pd.DataFrame) -> go.Figure:
-        """Creates an enhanced KPI dashboard with a color-coded table."""
         if kpi_df.empty:
             return go.Figure().add_annotation(
                 text="No KPI data available. Run a predictive cycle.",
@@ -944,7 +924,6 @@ class VisualizationSuite:
             colors[col] = [[color_scaler(v, display_df[col], high_is_bad) for v in display_df[col]]]
             font_colors[col] = [['black'] * len(display_df)]
         
-        # 🔁 Enhanced Visualization: Improved table styling
         fig = go.Figure(data=[go.Table(
             header=dict(
                 values=[f"<b>{c}</b>" for c in display_df.columns],
@@ -974,7 +953,6 @@ class VisualizationSuite:
 
     @staticmethod
     def plot_radar_chart(kpi_df: pd.DataFrame) -> go.Figure:
-        """Creates a radar chart to compare zones across key KPIs."""
         if kpi_df.empty:
             return go.Figure().add_annotation(
                 text="No KPI data available for radar chart.",
@@ -1020,7 +998,6 @@ class VisualizationSuite:
 
     @staticmethod
     def plot_risk_breakdown(kpi_df: pd.DataFrame) -> go.Figure:
-        """Creates a stacked bar plot showing risk score breakdown by incident type."""
         if kpi_df.empty:
             return go.Figure().add_annotation(
                 text="No KPI data available for risk breakdown.",
@@ -1066,7 +1043,6 @@ class VisualizationSuite:
 
     @staticmethod
     def plot_risk_heatmap(kpi_df: pd.DataFrame, dm: DataManager, config: Dict, risk_type: str) -> Optional[folium.Map]:
-        """Creates an enhanced choropleth map with interactive tooltips."""
         if dm.zones_gdf.empty:
             logger.warning("Cannot plot heatmap, zones_gdf is empty.")
             return None
@@ -1126,7 +1102,6 @@ class VisualizationSuite:
 
     @staticmethod
     def plot_gauge_chart(kpi_df: pd.DataFrame) -> go.Figure:
-        """Creates gauge charts for each zone's Ensemble Risk Score."""
         if kpi_df.empty:
             return go.Figure().add_annotation(
                 text="No KPI data available for gauge chart.",
@@ -1171,9 +1146,7 @@ class VisualizationSuite:
         )
         return fig
 
-# --- MAIN APPLICATION ---
 def main():
-    """Main application entry point."""
     config = load_config()
     dm = get_data_manager(config)
     analytics = PredictiveAnalyticsEngine(dm, config)
@@ -1181,7 +1154,6 @@ def main():
     viz = VisualizationSuite()
     report_gen = ReportGenerator()
 
-    # 🔁 New Feature: Initialize Streamlit session state for event staging
     if 'run_count' not in st.session_state:
         st.session_state.run_count = 0
     if 'historical_data' not in st.session_state:
@@ -1192,7 +1164,7 @@ def main():
             weather="Clear",
             traffic_level=1.0,
             major_event=False,
-            population_density=10000.0,  # Changed to float to match min_value, max_value, step
+            population_density=10000.0,
             air_quality_index=50.0,
             heatwave_alert=False
         )
@@ -1200,7 +1172,6 @@ def main():
     st.title("RedShield AI: Phoenix v3.1.0")
     st.markdown("**Commercial-grade predictive intelligence for urban emergency response**")
 
-    # 🔁 New Feature: Streamlit sidebar with interactive controls
     with st.sidebar:
         st.header("Control Panel")
         with st.expander("Environmental Factors", expanded=True):
@@ -1232,7 +1203,6 @@ def main():
                 heatwave_alert=heatwave
             )
 
-        # 🔁 New Feature: File uploader for historical data
         uploaded_file = st.file_uploader("Upload Historical Incident Data (JSON)", type="json")
         if uploaded_file:
             try:
@@ -1242,7 +1212,6 @@ def main():
             except Exception as e:
                 st.error(f"Failed to load file: {e}")
 
-        # 🔁 New Feature: Download button for sample history
         if st.button("Download Sample History"):
             buffer = dm._generate_sample_history_file()
             st.download_button(
@@ -1252,7 +1221,6 @@ def main():
                 mime="application/json"
             )
 
-    # 🔁 Enhanced Visualization: Real-Time System Insights section
     st.header("Real-Time System Insights")
     current_incidents = dm.get_current_incidents(st.session_state.env_factors)
     kpi_df = analytics.generate_kpis(st.session_state.historical_data, st.session_state.env_factors, current_incidents)
