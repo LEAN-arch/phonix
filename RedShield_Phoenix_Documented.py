@@ -14,7 +14,7 @@ from core import DataManager, PredictiveAnalyticsEngine, EnvFactors
 from utils import load_config, ReportGenerator
 
 # --- System Setup ---
-st.set_page_config(page_title="RedShield AI: Phoenix v3.2.2", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v3.2.4", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 
@@ -40,9 +40,10 @@ class Dashboard:
 
     def render(self):
         """Main rendering loop for the Streamlit application."""
-        st.title("RedShield AI: Phoenix v3.2.2")
+        st.title("RedShield AI: Phoenix v3.2.4")
         st.markdown("**Real-time Emergency Response Optimization Platform**")
 
+        # The sidebar must be rendered first to get the latest env_factors
         self._render_sidebar()
 
         env_factors = st.session_state['env_factors']
@@ -52,35 +53,40 @@ class Dashboard:
             current_incidents = self.dm.get_current_incidents(env_factors)
             kpi_df = self.engine.generate_kpis(historical_data, env_factors, current_incidents)
             forecast_df = self.engine.generate_forecast(historical_data, env_factors, kpi_df)
-            allocations = self.engine.generate_allocation_recommendations(kpi_df, forecast_df)
+            st.session_state['allocations'] = self.engine.generate_allocation_recommendations(kpi_df, forecast_df)
         
+        # Store results in session_state to be accessible by the report generator
+        st.session_state['kpi_df'] = kpi_df
+        st.session_state['forecast_df'] = forecast_df
+
         col1, col2 = st.columns([3, 2])
         with col1:
             st.header("Risk Heatmap & Allocations")
-            self._render_map(kpi_df, allocations)
+            self._render_map(st.session_state['kpi_df'], st.session_state['allocations'])
         with col2:
             st.header("Ambulance Allocation")
-            alloc_df = pd.DataFrame(list(allocations.items()), columns=['Zone', 'Recommended Units']).set_index('Zone')
+            alloc_df = pd.DataFrame(list(st.session_state['allocations'].items()), columns=['Zone', 'Recommended Units']).set_index('Zone')
             st.dataframe(alloc_df, use_container_width=True)
             
             st.header("Key Risk Indicators")
-            display_kpis = kpi_df[['Zone', 'Ensemble Risk Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']].set_index('Zone')
-            st.dataframe(display_kpis.style.format("{:.2f}").background_gradient(cmap='Reds', subset=['Ensemble Risk Score']), use_container_width=True)
+            if not kpi_df.empty and all(c in kpi_df.columns for c in ['Zone', 'Ensemble Risk Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']):
+                display_kpis = kpi_df[['Zone', 'Ensemble Risk Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']].set_index('Zone')
+                st.dataframe(display_kpis.style.format("{:.3f}").background_gradient(cmap='Reds', subset=['Ensemble Risk Score']), use_container_width=True)
 
         st.header("Risk Forecast")
         if not forecast_df.empty:
             forecast_pivot = forecast_df.pivot(index='Zone', columns='Horizon (Hours)', values='Combined Risk')
-            st.dataframe(forecast_pivot.style.format("{:.2f}").background_gradient(cmap='YlOrRd', axis=1), use_container_width=True)
+            st.dataframe(forecast_pivot.style.format("{:.3f}").background_gradient(cmap='YlOrRd', axis=1), use_container_width=True)
 
     def _render_sidebar(self):
         st.sidebar.header("Environmental Factors")
         env = st.session_state['env_factors']
-        is_holiday = st.sidebar.checkbox("Is Holiday", value=env.is_holiday)
-        weather = st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=["Clear", "Rain", "Fog"].index(env.weather))
-        traffic = st.sidebar.slider("Traffic Level", 0.5, 3.0, env.traffic_level, 0.1)
-        event = st.sidebar.checkbox("Major Event", value=env.major_event)
-        aqi = st.sidebar.slider("Air Quality Index (AQI)", 0.0, 500.0, env.air_quality_index, 5.0)
-        heatwave = st.sidebar.checkbox("Heatwave Alert", value=env.heatwave_alert)
+        is_holiday = st.sidebar.checkbox("Is Holiday", value=env.is_holiday, key="is_holiday_sb")
+        weather = st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=["Clear", "Rain", "Fog"].index(env.weather), key="weather_sb")
+        traffic = st.sidebar.slider("Traffic Level", 0.5, 3.0, env.traffic_level, 0.1, key="traffic_sb")
+        event = st.sidebar.checkbox("Major Event", value=env.major_event, key="event_sb")
+        aqi = st.sidebar.slider("Air Quality Index (AQI)", 0.0, 500.0, env.air_quality_index, 5.0, key="aqi_sb")
+        heatwave = st.sidebar.checkbox("Heatwave Alert", value=env.heatwave_alert, key="heatwave_sb")
 
         new_env = EnvFactors(is_holiday, weather, traffic, event, env.population_density, aqi, heatwave)
         if new_env != st.session_state['env_factors']:
@@ -99,13 +105,25 @@ class Dashboard:
 
         st.sidebar.header("Report Generation")
         if st.sidebar.button("Generate & Download PDF Report", use_container_width=True):
+            # Use data already calculated and stored in session_state from the main render pass
+            kpi_df = st.session_state.get('kpi_df', pd.DataFrame())
+            forecast_df = st.session_state.get('forecast_df', pd.DataFrame())
+            allocations = st.session_state.get('allocations', {})
+
             with st.spinner("Generating Report..."):
-                kpi_df = self.engine.generate_kpis(st.session_state.historical_data, st.session_state.env_factors, self.dm.get_current_incidents(st.session_state.env_factors))
-                forecast_df = self.engine.generate_forecast(st.session_state.historical_data, st.session_state.env_factors, kpi_df)
-                allocations = self.engine.generate_allocation_recommendations(kpi_df, forecast_df)
                 pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, forecast_df, allocations, st.session_state.env_factors)
+            
+            # --- FIX: Add user feedback for failed generation ---
             if pdf_buffer.getvalue():
-                st.sidebar.download_button(label="Download PDF", data=pdf_buffer, file_name=f"RedShield_Report_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+                st.sidebar.download_button(
+                    label="Download PDF Report",
+                    data=pdf_buffer,
+                    file_name=f"RedShield_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf"
+                )
+            else:
+                st.sidebar.error("Report generation failed.")
+                st.sidebar.info("Please check the 'logs/redshield_phoenix.log' file for details.")
     
     def _render_map(self, kpi_df: pd.DataFrame, allocations: dict):
         if self.dm.zones_gdf.empty or kpi_df.empty:
@@ -114,10 +132,7 @@ class Dashboard:
 
         try:
             map_gdf = self.dm.zones_gdf.join(kpi_df.set_index('Zone'))
-            # --- BUG FIX STARTS HERE ---
-            # Reset the index so 'name' becomes a column that Folium can find.
             map_gdf.reset_index(inplace=True)
-            # --- BUG FIX ENDS HERE ---
 
             center = map_gdf.unary_union.centroid
             m = folium.Map(location=[center.y, center.x], zoom_start=12, tiles="cartodbpositron")
@@ -125,11 +140,8 @@ class Dashboard:
             choropleth = folium.Choropleth(
                 geo_data=map_gdf.to_json(),
                 data=map_gdf,
-                # --- BUG FIX STARTS HERE ---
-                # Use the correct column 'name' for the key and 'Ensemble Risk Score' for the value.
                 columns=['name', 'Ensemble Risk Score'],
-                # --- BUG FIX ENDS HERE ---
-                key_on='feature.properties.name', # The key in the GeoJSON is now under properties
+                key_on='feature.properties.name',
                 fill_color='YlOrRd',
                 fill_opacity=0.7,
                 line_opacity=0.2,
@@ -137,12 +149,18 @@ class Dashboard:
             ).add_to(m)
 
             # Use GeoJsonTooltip for a cleaner implementation
-            folium.GeoJsonTooltip(
-                fields=["name", "Ensemble Risk Score"],
-                aliases=["Zone:", "Risk Score:"],
-                style=("background-color: white; color: #333333; font-family: arial; font-size: 12px; padding: 10px;")
-            ).add_to(choropleth.geojson)
-            
+            tooltip_html = """
+                <b>Zone:</b> {name}<br>
+                <b>Risk Score:</b> {risk:.3f}<br>
+            """
+            map_gdf['tooltip'] = map_gdf.apply(lambda row: tooltip_html.format(name=row['name'], risk=row['Ensemble Risk Score']), axis=1)
+
+            folium.GeoJson(
+                map_gdf,
+                style_function=lambda x: {'color': 'black', 'weight': 1, 'fillOpacity': 0},
+                tooltip=folium.features.GeoJsonTooltip(fields=['tooltip'], labels=False)
+            ).add_to(m)
+
             st_folium(m, use_container_width=True, height=550)
         except Exception as e:
             logger.error(f"Failed to render map: {e}", exc_info=True)
