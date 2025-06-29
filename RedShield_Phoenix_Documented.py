@@ -14,7 +14,7 @@ from core import DataManager, PredictiveAnalyticsEngine, EnvFactors
 from utils import load_config, ReportGenerator
 
 # --- System Setup ---
-st.set_page_config(page_title="RedShield AI: Phoenix v3.2.7", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="RedShield AI: Phoenix v3.2.8", layout="wide", initial_sidebar_state="expanded")
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 
@@ -53,7 +53,7 @@ class Dashboard:
 
     def render(self):
         """Main rendering loop for the Streamlit application."""
-        st.title("RedShield AI: Phoenix v3.2.7")
+        st.title("RedShield AI: Phoenix v3.2.8")
         st.markdown("**Real-time Emergency Response Optimization Platform**")
 
         self._render_sidebar()
@@ -81,9 +81,10 @@ class Dashboard:
             st.dataframe(alloc_df, use_container_width=True)
             
             st.header("Key Risk Indicators")
-            if not kpi_df.empty and all(c in kpi_df.columns for c in ['Zone', 'Ensemble Risk Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']):
-                display_kpis = kpi_df[['Zone', 'Ensemble Risk Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']].set_index('Zone')
-                st.dataframe(display_kpis.style.format("{:.3f}").background_gradient(cmap='Reds', subset=['Ensemble Risk Score']), use_container_width=True)
+            # --- ENHANCEMENT: Display the new, more advanced Integrated_Risk_Score ---
+            if not kpi_df.empty and all(c in kpi_df.columns for c in ['Zone', 'Integrated_Risk_Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']):
+                display_kpis = kpi_df[['Zone', 'Integrated_Risk_Score', 'Violence Clustering Score', 'Medical Surge Score', 'Spatial Spillover Risk']].set_index('Zone')
+                st.dataframe(display_kpis.style.format("{:.3f}").background_gradient(cmap='Reds', subset=['Integrated_Risk_Score']), use_container_width=True)
 
         st.header("Risk Forecast")
         if not forecast_df.empty:
@@ -98,13 +99,10 @@ class Dashboard:
         
         is_holiday = st.sidebar.checkbox("Is Holiday", value=env.is_holiday, key="is_holiday_sb")
         weather = st.sidebar.selectbox("Weather", ["Clear", "Rain", "Fog"], index=["Clear", "Rain", "Fog"].index(env.weather), key="weather_sb")
-        # NOTE: This is now a general traffic multiplier, with school status applied in the backend
         traffic = st.sidebar.slider("General Traffic Level", 0.5, 3.0, env.traffic_level, 0.1, key="traffic_sb", help="A general multiplier for traffic congestion.")
-        # The original "Major Event" checkbox is now functionally replaced by "Public Event Type" but is kept in EnvFactors for backend logic
-        # event = st.sidebar.checkbox("Major Event", value=env.major_event, key="event_sb") # This line is removed and replaced by the logic below
         aqi = st.sidebar.slider("Air Quality Index (AQI)", 0.0, 500.0, env.air_quality_index, 5.0, key="aqi_sb")
         heatwave = st.sidebar.checkbox("Heatwave Alert", value=env.heatwave_alert, key="heatwave_sb")
-
+        
         # --- ENHANCEMENT: New section for detailed strategic factors ---
         st.sidebar.subheader("Detailed Contextual Factors")
         
@@ -147,20 +145,12 @@ class Dashboard:
             kpi_df = st.session_state.get('kpi_df', pd.DataFrame())
             forecast_df = st.session_state.get('forecast_df', pd.DataFrame())
             allocations = st.session_state.get('allocations', {})
-
             with st.spinner("Generating Report..."):
                 pdf_buffer = ReportGenerator.generate_pdf_report(kpi_df, forecast_df, allocations, st.session_state.env_factors)
-            
             if pdf_buffer.getvalue():
-                st.sidebar.download_button(
-                    label="Download PDF Report",
-                    data=pdf_buffer,
-                    file_name=f"RedShield_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    mime="application/pdf"
-                )
+                st.sidebar.download_button(label="Download PDF Report", data=pdf_buffer, file_name=f"RedShield_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf", mime="application/pdf")
             else:
-                st.sidebar.error("Report generation failed.")
-                st.sidebar.info("Please check the 'logs/redshield_phoenix.log' file for details.")
+                st.sidebar.error("Report generation failed."); st.sidebar.info("Check logs for details.")
     
     def _render_map(self, kpi_df: pd.DataFrame, allocations: dict):
         if self.dm.zones_gdf.empty or kpi_df.empty:
@@ -171,13 +161,17 @@ class Dashboard:
             map_gdf.reset_index(inplace=True)
             center = map_gdf.unary_union.centroid
             m = folium.Map(location=[center.y, center.x], zoom_start=12, tiles="cartodbpositron")
+            
+            # --- ENHANCEMENT: Use the new, more advanced Integrated_Risk_Score for the map ---
+            risk_col = 'Integrated_Risk_Score' if 'Integrated_Risk_Score' in map_gdf.columns else 'Ensemble Risk Score'
+            
             choropleth = folium.Choropleth(
                 geo_data=map_gdf.to_json(), data=map_gdf,
-                columns=['name', 'Ensemble Risk Score'], key_on='feature.properties.name',
-                fill_color='YlOrRd', fill_opacity=0.7, line_opacity=0.2, legend_name='Ensemble Risk Score'
+                columns=['name', risk_col], key_on='feature.properties.name',
+                fill_color='YlOrRd', fill_opacity=0.7, line_opacity=0.2, legend_name='Integrated Risk Score'
             ).add_to(m)
             tooltip_html = "<b>Zone:</b> {name}<br><b>Risk Score:</b> {risk:.3f}"
-            map_gdf['tooltip'] = map_gdf.apply(lambda row: tooltip_html.format(name=row['name'], risk=row['Ensemble Risk Score']), axis=1)
+            map_gdf['tooltip'] = map_gdf.apply(lambda row: tooltip_html.format(name=row['name'], risk=row[risk_col]), axis=1)
             folium.GeoJson(map_gdf, style_function=lambda x: {'color': 'black', 'weight': 1, 'fillOpacity': 0},
                            tooltip=folium.features.GeoJsonTooltip(fields=['tooltip'], labels=False)).add_to(m)
             st_folium(m, use_container_width=True, height=550)
@@ -191,10 +185,20 @@ class Dashboard:
         with st.expander("View Detailed KPI Breakdown"):
             st.markdown("This table shows the raw values for the key analytical indicators explained below.")
             
-            detailed_kpi_cols = ['Zone', 'Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Information Value Index']
+            # --- ENHANCEMENT: Expand the list of detailed KPIs to include the new advanced metrics ---
+            detailed_kpi_cols = [
+                'Zone', 'Incident Probability', 'Expected Incident Volume', 'Risk Entropy', 
+                'Anomaly Score', 'Spatial Spillover Risk', 'Resource Adequacy Index', 
+                'Chaos Sensitivity Score', 'Bayesian Confidence Score', 'Information Value Index',
+                'STGP_Risk', 'HMM_State_Risk', 'GNN_Structural_Risk', 'Game_Theory_Tension',
+                'Integrated_Risk_Score'
+            ]
             
-            if not kpi_df.empty and all(c in kpi_df.columns for c in detailed_kpi_cols):
-                st.dataframe(kpi_df[detailed_kpi_cols].set_index('Zone').style.format("{:.3f}"))
+            # Filter to only columns that actually exist in the dataframe to avoid errors
+            available_cols = [col for col in detailed_kpi_cols if col in kpi_df.columns]
+            
+            if not kpi_df.empty and len(available_cols) > 1:
+                st.dataframe(kpi_df[available_cols].set_index('Zone').style.format("{:.3f}"))
             else:
                 st.warning("Could not display detailed KPIs. One or more required columns are missing.")
 
@@ -247,6 +251,11 @@ class Dashboard:
             - **Chaos Sensitivity Score:** A measure of system volatility. A high score suggests the system is in a fragile state where small events could trigger large, unpredictable consequences.
             - **Bayesian Confidence Score:** A measure (0-1) of how certain the Bayesian network is about its `Incident Probability` prediction, derived from the variance of the posterior distribution.
             - **Information Value Index:** A proxy measure of how "actionable" the current set of predictions is. A high value (high standard deviation in risk scores) means there are clear, differentiable hotspots, making resource allocation decisions easier and more impactful.
+            - **(Advanced) STGP Risk:** A proxy for a Spatiotemporal Gaussian Process, this score is high for zones that are geographically close to recent, high-severity incidents.
+            - **(Advanced) HMM State Risk:** A proxy for a Hidden Markov Model, this score identifies zones in a latent high-risk 'state' based on a combination of volatility and resource strain.
+            - **(Advanced) GNN Structural Risk:** A proxy for a Graph Neural Network, this score reflects a zone's intrinsic vulnerability based on its structural importance (centrality) within the city's road network.
+            - **(Advanced) Game Theory Tension:** Models the competition for resources. A zone's tension is high when its expected incident demand is a large fraction of the total system-wide demand.
+            - **(Ultimate) Integrated Risk Score:** The final, most sophisticated risk metric, combining the original ensemble score with the four advanced analytical KPIs for a comprehensive assessment.
             """)
 
 def main():
